@@ -6,7 +6,7 @@
 
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
 [![.NET](https://img.shields.io/badge/.NET-10.0-purple.svg)](https://dotnet.microsoft.com/)
-[![Platform](https://img.shields.io/badge/Platform-Windows%2010%2F11%20x64-0078D4.svg)](https://www.microsoft.com/windows)
+[![Platform](https://img.shields.io/badge/Platform-Windows%2010%2F11%20x64%20%7C%20ARM64-0078D4.svg)](https://www.microsoft.com/windows)
 [![Style](https://img.shields.io/badge/Design-Fluent%20%2F%20Mica-success.svg)](https://github.com/lepoco/wpfui)
 [![Release](https://img.shields.io/github/v/release/PhoebeCLS/StartupGuard)](https://github.com/PhoebeCLS/StartupGuard/releases)
 
@@ -69,16 +69,17 @@
 
 ## 📦 下载与安装
 
-前往 **[GitHub Releases](https://github.com/PhoebeCLS/StartupGuard/releases)** 下载对应包：
+前往 **[GitHub Releases](https://github.com/PhoebeCLS/StartupGuard/releases)** 根据设备架构（`x64` / `arm64`）与部署方式下载对应包（已取消 MSIX 发行，统一提供无限制且支持彻底卸载的原生版本）：
 
-1. **标准安装版（推荐）**：`StartupGuard-Setup-vX.Y.Z-win-x64.exe`
-   - 自动安装程序组件、注册后台守护服务与托盘开机自启、支持桌面快捷方式与干净零残留卸载（卸载后支持保留你已做的系统优化状态）。
-2. **绿色便携压缩包**：`StartupGuard-vX.Y.Z-win-x64.zip`
-   - 自包含免运行库压缩包，解压至任意目录运行 `StartupGuard.App.exe` 即可管理与安装/切换服务状态。
-3. **MSIX 现代打包版**：`StartupGuard-vX.Y.Z-win-x64.msix`
-   - 附带由 CI 匿名临时生成的自签名公钥 `StartupGuard-TestCert.cer`（不含任何个人隐私信息）；首次安装 `.msix` 前请先右键安装 `.cer` 至「本地计算机 → 受信任的根证书颁发机构」。
+1. **安装版（推荐）**：`StartupGuard-X.Y.Z-<arch>-<self-contained|framework-dependent>-Setup.exe`
+   - 自动安装程序组件、注册 `LocalSystem` 后台守护服务与托盘开机自启、支持快捷方式；卸载时默认保留个人规则库与日志，也可在卸载向导勾选“同时删除全部个人数据”以零残留清理程序、服务、注册表、`%LocalAppData%`、`%AppData%` 及 `C:\ProgramData\StartupGuard` 文件夹。
+2. **绿色便携压缩包**：`StartupGuard-X.Y.Z-<arch>-<self-contained|framework-dependent>-portable.zip`
+   - 解压至任意目录运行 `StartupGuard.App.exe` 即可使用，并在界面中按需注册或切换后台守护服务状态。
+3. **部署变体选择建议**：
+   - `self-contained`（独立自包含）：内置 .NET 10 运行时，开箱即用。
+   - `framework-dependent`（依赖框架）：安装包体积更小，需系统已安装 [.NET 10 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/10.0)。
 
-> **运行要求**：Windows 10 (19041+) / Windows 11 (x64)，推荐开启 Windows 系统通知以便实时接收“先拦截待审核”提醒。
+> **运行要求**：Windows 10 (19041+) / Windows 11 64 位（`x64` / `ARM64`；因内核 ETW 跟踪仅支持 64 位，暂不支持 32 位 x86），推荐开启 Windows 系统通知以便实时接收“先拦截待审核”提醒。
 
 ---
 
@@ -90,8 +91,8 @@
 # 1. 运行全量 235+ 单元测试与回归测试
 dotnet test tests/StartupGuard.Tests/StartupGuard.Tests.csproj -c Release -p:Platform=x64
 
-# 2. 发布绿色便携版与安装包（需 Windows SDK MakeAppx/SignTool 与 NSIS）
-./scripts/build_release.ps1 -Version "1.0.0"
+# 2. 发布全部 8 个安装包与绿色便携压缩包（需 NSIS makensis.exe）
+./scripts/build_release.ps1 -Version "1.0.1"
 
 # 3. 仅生成深浅双模界面预览截图
 ./scripts/capture_screenshots.ps1

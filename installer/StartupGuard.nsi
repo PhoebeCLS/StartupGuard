@@ -6,11 +6,25 @@
 Unicode true
 !include "MUI2.nsh"
 !include "FileFunc.nsh"
+!include "nsDialogs.nsh"
+!include "LogicLib.nsh"
 
 ; 基本元数据定义
 !define PRODUCT_NAME "StartupGuard"
 !ifndef PRODUCT_VERSION
-  !define PRODUCT_VERSION "1.0.0"
+  !define PRODUCT_VERSION "1.0.1"
+!endif
+!ifndef TARGET_ARCH
+  !define TARGET_ARCH "x64"
+!endif
+!ifndef DEPLOY_MODE
+  !define DEPLOY_MODE "self-contained"
+!endif
+!ifndef PUBLISH_DIR
+  !define PUBLISH_DIR "..\artifacts\publish\win-${TARGET_ARCH}-${DEPLOY_MODE}"
+!endif
+!ifndef OUT_FILE
+  !define OUT_FILE "..\dist\StartupGuard-${PRODUCT_VERSION}-${TARGET_ARCH}-${DEPLOY_MODE}-Setup.exe"
 !endif
 !define PRODUCT_PUBLISHER "StartupGuard Security Team"
 !define PRODUCT_WEB_SITE "https://github.com/PhoebeCLS/StartupGuard"
@@ -18,10 +32,15 @@ Unicode true
 !define PRODUCT_DIR_REGKEY "Software\${PRODUCT_NAME}"
 
 Name "${PRODUCT_NAME} v${PRODUCT_VERSION}"
-OutFile "..\dist\StartupGuard-Setup-v${PRODUCT_VERSION}-win-x64.exe"
+OutFile "${OUT_FILE}"
 InstallDir "$PROGRAMFILES64\StartupGuard"
 InstallDirRegKey HKLM "${PRODUCT_DIR_REGKEY}" "InstallDir"
 RequestExecutionLevel admin
+
+; 卸载页面状态变量（默认不勾选：仅卸载程序本体，保留个人规则、日志与配置）
+Var UninstDeleteDataDialog
+Var UninstDeleteDataCheckbox
+Var UninstDeleteUserData
 
 ; 界面视觉配置
 !define MUI_ABORTWARNING
@@ -41,11 +60,49 @@ RequestExecutionLevel admin
 
 ; 卸载页面流
 !insertmacro MUI_UNPAGE_CONFIRM
+UninstPage custom un.DeleteDataPageCreate un.DeleteDataPageLeave
 !insertmacro MUI_UNPAGE_INSTFILES
 !insertmacro MUI_UNPAGE_FINISH
 
 ; 多语言设置 (简体中文)
 !insertmacro MUI_LANGUAGE "SimpChinese"
+
+; =========================================================================
+; 卸载自定义页：询问是否同时删除个人数据（默认不勾选）
+; =========================================================================
+Function un.onInit
+    StrCpy $UninstDeleteUserData "0"
+FunctionEnd
+
+Function un.DeleteDataPageCreate
+    !insertmacro MUI_HEADER_TEXT "个人数据清理选项" "选择是否在卸载程序的同时删除个人规则、日志与全部本地数据"
+    nsDialogs::Create 1018
+    Pop $UninstDeleteDataDialog
+    ${If} $UninstDeleteDataDialog == error
+        Abort
+    ${EndIf}
+
+    ${NSD_CreateLabel} 0 0 100% 30u "卸载程序将移除 StartupGuard 主程序、后台守护服务、开机自启项与快捷方式。默认不勾选下方选项，保留您的个人规则与拦截日志以便后续重装或升级继续使用。"
+    Pop $0
+
+    ${NSD_CreateCheckbox} 0 38u 100% 24u "同时删除全部个人数据（彻底清除规则库、拦截日志、配置及 C:\ProgramData\StartupGuard 文件夹）"
+    Pop $UninstDeleteDataCheckbox
+    ${NSD_SetState} $UninstDeleteDataCheckbox ${BST_UNCHECKED}
+
+    ${NSD_CreateLabel} 0 70u 100% 36u "提示：勾选后将连同 C:\ProgramData\StartupGuard 及其内部所有文件、%LocalAppData%\StartupGuard、%AppData%\StartupGuard 与用户配置注册表一并彻底移除，不留任何残留（不会还原您已优化的系统自启与右键菜单状态）。"
+    Pop $0
+
+    nsDialogs::Show
+FunctionEnd
+
+Function un.DeleteDataPageLeave
+    ${NSD_GetState} $UninstDeleteDataCheckbox $0
+    ${If} $0 == ${BST_CHECKED}
+        StrCpy $UninstDeleteUserData "1"
+    ${Else}
+        StrCpy $UninstDeleteUserData "0"
+    ${EndIf}
+FunctionEnd
 
 ; =========================================================================
 ; 安装区段 (支持自定义是否创建桌面与开始菜单快捷方式)
@@ -59,19 +116,23 @@ Section "StartupGuard 核心程序与守护服务 (必需)" SEC_CORE
     ; 覆盖安装/升级前先停止既有后台服务与驻留进程，防止旧服务继续占用文件或沿用旧二进制
     DetailPrint "正在检查并停止运行中的 StartupGuard 服务与进程..."
     ExecWait 'sc.exe stop StartupGuardService'
-    ExecWait 'taskkill.exe /F /IM StartupGuard.TrayHost.exe'
-    ExecWait 'taskkill.exe /F /IM StartupGuard.App.exe'
-    ExecWait 'taskkill.exe /F /IM StartupGuard.ProbeHost.exe'
-    ExecWait 'taskkill.exe /F /IM StartupGuard.Service.exe'
-    Sleep 300
+    ExecWait 'taskkill.exe /F /T /IM StartupGuard.TrayHost.exe'
+    ExecWait 'taskkill.exe /F /T /IM StartupGuard.App.exe'
+    ExecWait 'taskkill.exe /F /T /IM StartupGuard.ProbeHost.exe'
+    ExecWait 'taskkill.exe /F /T /IM StartupGuard.Service.exe'
+    Sleep 500
 
-    ; 释放全链路 4 大核心 Win-x64 可执行程序与自包含 (Self-Contained) 完整运行库
-    File "..\artifacts\publish\win-x64\StartupGuard.Service.exe"
-    File "..\artifacts\publish\win-x64\StartupGuard.TrayHost.exe"
-    File "..\artifacts\publish\win-x64\StartupGuard.ProbeHost.exe"
-    File "..\artifacts\publish\win-x64\StartupGuard.App.exe"
-    File /nonfatal "..\artifacts\publish\win-x64\*.dll"
-    File /nonfatal "..\artifacts\publish\win-x64\*.json"
+    ; 升级或跨部署模式覆盖安装时先清理旧程序与运行库，避免 framework-dependent 与 self-contained 残留冲突
+    Delete "$INSTDIR\StartupGuard.Service.exe"
+    Delete "$INSTDIR\StartupGuard.TrayHost.exe"
+    Delete "$INSTDIR\StartupGuard.ProbeHost.exe"
+    Delete "$INSTDIR\StartupGuard.App.exe"
+    Delete "$INSTDIR\*.dll"
+    Delete "$INSTDIR\*.json"
+    RMDir /r "$INSTDIR\runtimes"
+
+    ; 释放 4 大核心可执行程序及对应部署模式运行库 (${TARGET_ARCH} / ${DEPLOY_MODE})
+    File /nonfatal /r /x *.pdb "${PUBLISH_DIR}\*.*"
 
     ; 释放多尺寸 Fluent 高清图标
     CreateDirectory "$INSTDIR\Assets"
@@ -148,24 +209,36 @@ Section "Uninstall"
 
     ; 1. 停止后台服务与运行中的交互式进程（解除对 rules.db 与安装目录的占用）
     ExecWait 'sc.exe stop StartupGuardService'
-    ExecWait 'taskkill.exe /F /IM StartupGuard.TrayHost.exe'
-    ExecWait 'taskkill.exe /F /IM StartupGuard.App.exe'
-    ExecWait 'taskkill.exe /F /IM StartupGuard.ProbeHost.exe'
-    ExecWait 'taskkill.exe /F /IM StartupGuard.Service.exe'
-    Sleep 300
+    ExecWait 'taskkill.exe /F /T /IM StartupGuard.TrayHost.exe'
+    ExecWait 'taskkill.exe /F /T /IM StartupGuard.App.exe'
+    ExecWait 'taskkill.exe /F /T /IM StartupGuard.ProbeHost.exe'
+    ExecWait 'taskkill.exe /F /T /IM StartupGuard.Service.exe'
+    Sleep 800
 
-    ; 2. 清理 StartupGuard 自身配置与缓存（保留用户已做的右键菜单与自启项优化状态）
-    DetailPrint "正在清理 StartupGuard 数据、设置与缓存残留..."
-    ExecWait '"$INSTDIR\StartupGuard.Service.exe" --uninstall-reset'
+    ; 2. 若用户勾选了“同时删除全部个人数据”，先执行全量数据重置（必须在删除 Service.exe 之前完成）
+    ${If} $UninstDeleteUserData == "1"
+        DetailPrint "正在彻底清除 StartupGuard 个人规则库、拦截日志、配置与共享数据..."
+        ${If} ${FileExists} "$INSTDIR\StartupGuard.Service.exe"
+            ExecWait '"$INSTDIR\StartupGuard.Service.exe" --uninstall-reset'
+        ${EndIf}
+    ${Else}
+        DetailPrint "按用户选择保留个人规则库、拦截日志与偏好设置..."
+    ${EndIf}
 
     ; 3. 删除后台服务
     ExecWait 'sc.exe delete StartupGuardService'
 
-    ; 4. 清理开机自启注册表（同时清理 64 位与 32 位视图下的 StartupGuardTray）
+    ; 4. 清理开机自启注册表（同时清理 HKLM 与 HKCU 的 64/32 位 Run 及 StartupApproved）
     SetRegView 64
     DeleteRegValue HKLM "Software\Microsoft\Windows\CurrentVersion\Run" "StartupGuardTray"
+    DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "StartupGuardTray"
+    DeleteRegValue HKLM "Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run" "StartupGuardTray"
+    DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run" "StartupGuardTray"
     SetRegView 32
     DeleteRegValue HKLM "Software\Microsoft\Windows\CurrentVersion\Run" "StartupGuardTray"
+    DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "StartupGuardTray"
+    DeleteRegValue HKLM "Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run32" "StartupGuardTray"
+    DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run32" "StartupGuardTray"
     SetRegView 64
 
     ; 5. 清理桌面与开始菜单快捷方式
@@ -201,24 +274,36 @@ Section "Uninstall"
     StrCpy $0 "cmd.exe"
     ExecShell "" "$0" '/c ping -n 2 127.0.0.1 >nul & if exist "$INSTDIR" rmdir /s /q "$INSTDIR"' SW_HIDE
 
-    ; 7. 兜底清理用户级与系统级注册表及数据目录（确保卸载零残留）
+    ; 7. 清理系统应用卸载注册表与安装路径键（无论是否删除个人数据，程序卸载注册表必须清除）
     SetRegView 64
-    DeleteRegKey HKCU "Software\StartupGuard"
-    DeleteRegKey HKLM "Software\StartupGuard"
     DeleteRegKey HKLM "${PRODUCT_UNINST_KEY}"
     DeleteRegKey HKLM "${PRODUCT_DIR_REGKEY}"
     SetRegView 32
-    DeleteRegKey HKCU "Software\StartupGuard"
-    DeleteRegKey HKLM "Software\StartupGuard"
     DeleteRegKey HKLM "${PRODUCT_UNINST_KEY}"
     DeleteRegKey HKLM "${PRODUCT_DIR_REGKEY}"
     SetRegView 64
 
-    SetShellVarContext current
-    RMDir /r "$LOCALAPPDATA\StartupGuard"
-    RMDir /r "$APPDATA\StartupGuard"
-    SetShellVarContext all
-    RMDir /r "$APPDATA\StartupGuard"
+    ; 8. 仅当用户明确勾选时，彻底移除个人配置注册表、AppData 及 C:\ProgramData\StartupGuard 全目录（不留空目录与锁文件）
+    ${If} $UninstDeleteUserData == "1"
+        SetRegView 64
+        DeleteRegKey HKCU "Software\StartupGuard"
+        DeleteRegKey HKLM "Software\StartupGuard"
+        SetRegView 32
+        DeleteRegKey HKCU "Software\StartupGuard"
+        DeleteRegKey HKLM "Software\StartupGuard"
+        SetRegView 64
+
+        SetShellVarContext current
+        RMDir /r "$LOCALAPPDATA\StartupGuard"
+        RMDir /r "$APPDATA\StartupGuard"
+        ExecWait '"$0" /c if exist "$LOCALAPPDATA\StartupGuard" (attrib -r -s -h "$LOCALAPPDATA\StartupGuard\*.*" /s /d >nul 2>&1 & rmdir /s /q "$LOCALAPPDATA\StartupGuard") & if exist "$APPDATA\StartupGuard" (attrib -r -s -h "$APPDATA\StartupGuard\*.*" /s /d >nul 2>&1 & rmdir /s /q "$APPDATA\StartupGuard")'
+
+        SetShellVarContext all
+        RMDir /r "$APPDATA\StartupGuard"
+        ExpandEnvStrings $1 "%ProgramData%"
+        ExecWait '"$0" /c if exist "$APPDATA\StartupGuard" (attrib -r -s -h "$APPDATA\StartupGuard\*.*" /s /d >nul 2>&1 & rmdir /s /q "$APPDATA\StartupGuard") & if exist "$1\StartupGuard" (attrib -r -s -h "$1\StartupGuard\*.*" /s /d >nul 2>&1 & rmdir /s /q "$1\StartupGuard")'
+        SetShellVarContext current
+    ${EndIf}
 
     SetAutoClose true
 SectionEnd

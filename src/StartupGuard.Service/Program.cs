@@ -174,10 +174,7 @@ public static class Program
                         foreach (string sub in new[] { @"AppData\Local\StartupGuard", @"AppData\Roaming\StartupGuard" })
                         {
                             string candidate = Path.Combine(profileDir, sub);
-                            if (Directory.Exists(candidate))
-                            {
-                                try { Directory.Delete(candidate, recursive: true); } catch { }
-                            }
+                            UserSettingsStore.PurgeDirectoryCompletely(candidate);
                         }
                     }
                 }

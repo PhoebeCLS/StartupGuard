@@ -2112,4 +2112,93 @@ public class Feedback12BatchTests
         string driverBlock = mainCs[driverCaseStart..driverCaseEnd];
         Assert.DoesNotContain("DeleteEntry", driverBlock);
     }
+
+    [Fact]
+    public void PurgeDirectoryCompletely_DeletesSqliteWalFilesReadOnlyFilesAndRootFolder()
+    {
+        string tempRoot = Path.Combine(Path.GetTempPath(), $"sg_purge_test_{Guid.NewGuid():N}", "StartupGuard");
+        string dataDir = Path.Combine(tempRoot, "data");
+        string logsDir = Path.Combine(tempRoot, "logs");
+        Directory.CreateDirectory(dataDir);
+        Directory.CreateDirectory(logsDir);
+
+        try
+        {
+            string dbPath = Path.Combine(dataDir, "rules.db");
+            using (var repo = new SqliteRuleRepository(dbPath))
+            {
+                repo.InsertOrUpdateRule(new RuleRecord
+                {
+                    DisplayName = "PurgeSampleRule",
+                    Category = MonitorCategory.StartupItem,
+                    ActionType = InterceptionAction.Allow,
+                    RuleMode = RuleMatchMode.PermanentAdaptive,
+                    LocationKey = @"HKCU\Software\Microsoft\Windows\CurrentVersion\Run\PurgeSample",
+                    NormalizedPath = @"C:\Temp\PurgeSample.exe"
+                });
+            }
+
+            string logPath = Path.Combine(logsDir, "diag.log");
+            File.WriteAllText(logPath, "sample diagnostic content");
+            File.SetAttributes(logPath, FileAttributes.ReadOnly | FileAttributes.Hidden);
+            File.SetAttributes(dataDir, FileAttributes.ReadOnly);
+
+            Assert.True(Directory.Exists(tempRoot));
+            bool deleted = UserSettingsStore.PurgeDirectoryCompletely(tempRoot);
+
+            Assert.True(deleted);
+            Assert.False(Directory.Exists(tempRoot));
+        }
+        finally
+        {
+            string? parent = Directory.GetParent(tempRoot)?.FullName;
+            if (!string.IsNullOrWhiteSpace(parent) && Directory.Exists(parent))
+            {
+                UserSettingsStore.PurgeDirectoryCompletely(parent);
+            }
+        }
+    }
+
+    [Fact]
+    public void InstallerAndMultiArchPackagingContractsHold()
+    {
+        string repoRoot = FindRepoRoot();
+        string nsi = File.ReadAllText(Path.Combine(repoRoot, "installer", "StartupGuard.nsi"));
+        string buildScript = File.ReadAllText(Path.Combine(repoRoot, "scripts", "build_release.ps1"));
+        string releaseYml = File.ReadAllText(Path.Combine(repoRoot, ".github", "workflows", "release.yml"));
+        string readme = File.ReadAllText(Path.Combine(repoRoot, "README.md"));
+
+        // 1. 卸载可选清理个人数据（默认不勾选；勾选时连同 ProgramData\StartupGuard 文件夹彻底移除）
+        Assert.Contains("!include \"nsDialogs.nsh\"", nsi);
+        Assert.Contains("StrCpy $UninstDeleteUserData \"0\"", nsi);
+        Assert.Contains("${NSD_SetState} $UninstDeleteDataCheckbox ${BST_UNCHECKED}", nsi);
+        Assert.Contains("同时删除全部个人数据", nsi);
+        Assert.Contains("C:\\ProgramData\\StartupGuard", nsi);
+        Assert.Contains("DeleteRegValue HKCU \"Software\\Microsoft\\Windows\\CurrentVersion\\Run\" \"StartupGuardTray\"", nsi);
+        Assert.Contains("StartupApproved\\Run32", nsi);
+        Assert.Contains("ExpandEnvStrings $1 \"%ProgramData%\"", nsi);
+
+        int uninstStart = nsi.IndexOf("Section \"Uninstall\"", StringComparison.Ordinal);
+        Assert.True(uninstStart > 0);
+        string uninstallSection = nsi[uninstStart..];
+        int resetCallIdx = uninstallSection.IndexOf("--uninstall-reset", StringComparison.Ordinal);
+        int delServiceExeIdx = uninstallSection.IndexOf("Delete \"$INSTDIR\\StartupGuard.Service.exe\"", StringComparison.Ordinal);
+        Assert.True(resetCallIdx > 0 && delServiceExeIdx > resetCallIdx);
+
+        // 2. 取消 MSIX 发行，统一构建 x64 / arm64 的 self-contained 与 framework-dependent 8 个发行产物
+        Assert.False(File.Exists(Path.Combine(repoRoot, "installer", "AppxManifest.xml")));
+        Assert.DoesNotContain(".msix", buildScript, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain(".cer", buildScript, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("@(\"x64\", \"arm64\")", buildScript);
+        Assert.Contains("@(\"self-contained\", \"framework-dependent\")", buildScript);
+        Assert.Contains("-portable.zip", buildScript);
+        Assert.Contains("-Setup.exe", buildScript);
+
+        Assert.DoesNotContain(".msix", releaseYml, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain(".cer", releaseYml, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("| File | SHA256 |", releaseYml);
+        Assert.Contains("if (-not $isInitialRelease -and $featList.Count -gt 0)", releaseYml);
+        Assert.DoesNotContain(".msix", readme, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain(".cer", readme, StringComparison.OrdinalIgnoreCase);
+    }
 }

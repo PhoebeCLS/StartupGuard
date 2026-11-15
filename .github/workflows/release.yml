@@ -104,7 +104,7 @@ jobs:
         shell: pwsh
         run: |
           ./scripts/build_release.ps1 -Version "${{ env.APP_VERSION }}"
-          ./scripts/capture_screenshots.ps1 -AppExe "artifacts/publish/win-x64/StartupGuard.App.exe" -AssetsDir "assets"
+          ./scripts/capture_screenshots.ps1 -AppExe "artifacts/publish/win-x64-self-contained/StartupGuard.App.exe" -AssetsDir "assets"
 
       - name: Configure SSH Commit & Tag Signing Key (Ephemeral)
         shell: pwsh
@@ -222,7 +222,8 @@ jobs:
           [void]$sb.AppendLine("## 🚀 StartupGuard $tag 更新日志")
           [void]$sb.AppendLine()
 
-          if (-not $prev) {
+          $isInitialRelease = [string]::IsNullOrWhiteSpace($prev)
+          if ($isInitialRelease) {
             [void]$sb.AppendLine("> 🎉 **StartupGuard $tag 首个正式开源版本发布！** 初始规则库完全为空，不含任何内置预置规则。")
             [void]$sb.AppendLine()
           }
@@ -231,7 +232,7 @@ jobs:
             [void]$sb.AppendLine()
           }
 
-          if ($featList.Count -gt 0) {
+          if (-not $isInitialRelease -and $featList.Count -gt 0) {
             [void]$sb.AppendLine("### ✨ 新增特性")
             foreach ($i in $featList) { [void]$sb.AppendLine($i) }
             [void]$sb.AppendLine()
@@ -254,30 +255,45 @@ jobs:
 
           [void]$sb.AppendLine("---")
           [void]$sb.AppendLine()
-          [void]$sb.AppendLine("## 📥 构建产物说明 (Windows x64)")
+          [void]$sb.AppendLine("## 📥 下载版本说明（Windows 10/11 x64 & ARM64）")
           [void]$sb.AppendLine()
-          [void]$sb.AppendLine("| 文件名 | 适用场景 |")
+          [void]$sb.AppendLine("> 注：因内核 ETW 监控仅支持 64 位系统（不支持 32 位 x86），提供 $($bt)x64$($bt) 与 $($bt)arm64$($bt) 架构的 **独立自包含（$($bt)self-contained$($bt)）** 与 **依赖框架（$($bt)framework-dependent$($bt)，需安装 [.NET 10 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/10.0)）** 两种安装版 / 便携包。安装版卸载时支持勾选彻底清除全部个人数据及 $($bt)C:\ProgramData\StartupGuard$($bt) 文件夹（默认不勾选以保留个人规则）。")
+          [void]$sb.AppendLine()
+          [void]$sb.AppendLine("| 类型 | $($bt)self-contained$($bt)（免装运行库，推荐） | $($bt)framework-dependent$($bt)（体积小，需 .NET 10 桌面运行时） |")
+          [void]$sb.AppendLine("| :--- | :--- | :--- |")
+          [void]$sb.AppendLine("| **x64 安装版** | $($bt)StartupGuard-$ver-x64-self-contained-Setup.exe$($bt) | $($bt)StartupGuard-$ver-x64-framework-dependent-Setup.exe$($bt) |")
+          [void]$sb.AppendLine("| **x64 便携包** | $($bt)StartupGuard-$ver-x64-self-contained-portable.zip$($bt) | $($bt)StartupGuard-$ver-x64-framework-dependent-portable.zip$($bt) |")
+          [void]$sb.AppendLine("| **ARM64 安装版** | $($bt)StartupGuard-$ver-arm64-self-contained-Setup.exe$($bt) | $($bt)StartupGuard-$ver-arm64-framework-dependent-Setup.exe$($bt) |")
+          [void]$sb.AppendLine("| **ARM64 便携包** | $($bt)StartupGuard-$ver-arm64-self-contained-portable.zip$($bt) | $($bt)StartupGuard-$ver-arm64-framework-dependent-portable.zip$($bt) |")
+          [void]$sb.AppendLine()
+          [void]$sb.AppendLine("### 🔐 SHA256")
+          [void]$sb.AppendLine()
+          [void]$sb.AppendLine("| File | SHA256 |")
           [void]$sb.AppendLine("| :--- | :--- |")
-          [void]$sb.AppendLine("| **$($bt)StartupGuard-Setup-v$ver-win-x64.exe$($bt)** | **标准安装版（推荐）**：自动配置服务自启、托盘守护、桌面与开始菜单快捷方式及完整卸载器。 |")
-          [void]$sb.AppendLine("| **$($bt)StartupGuard-v$ver-win-x64.zip$($bt)** | **绿色便携压缩包**：免安装自包含架构，解压即可直接运行主程序，内含全部运行组件与协议声明。 |")
-          [void]$sb.AppendLine("| **$($bt)StartupGuard-v$ver-win-x64.msix$($bt)** | **MSIX 现代打包版**（附带匿名自签名公钥 $($bt)StartupGuard-TestCert.cer$($bt)）：安装前需先将 $($bt).cer$($bt) 导入「受信任的根证书颁发机构」。 |")
-          [void]$sb.AppendLine()
-          [void]$sb.AppendLine("### 🔐 SHA-256 校验值")
-          [void]$sb.AppendLine('```text')
-          [void]$sb.AppendLine((Get-Content "dist/SHA256SUMS.txt" -Raw).TrimEnd())
-          [void]$sb.AppendLine('```')
+          foreach ($line in (Get-Content "dist/SHA256SUMS.txt" -Encoding UTF8)) {
+            if ($line -match '^([0-9a-fA-F]{64})\s+(.+)$') {
+              [void]$sb.AppendLine("| $($Matches[2].Trim()) | $($Matches[1].ToLowerInvariant()) |")
+            }
+          }
 
           $notesPath = Join-Path $env:RUNNER_TEMP "release_notes.md"
-          [System.IO.File]::WriteAllText($notesPath, $sb.ToString(), [System.Text.Encoding]::UTF8)
+          [System.IO.File]::WriteAllText($notesPath, $sb.ToString(), (New-Object System.Text.UTF8Encoding($false)))
+
+          $assetFiles = @(
+            Get-ChildItem "dist" -File |
+              Where-Object { $_.Name -like "StartupGuard-$ver-*.exe" -or $_.Name -like "StartupGuard-$ver-*.zip" } |
+              Sort-Object Name |
+              ForEach-Object { $_.FullName }
+          )
+          if ($assetFiles.Count -ne 8) {
+            throw "Expected 8 release assets in dist/ for v$ver, found $($assetFiles.Count): $($assetFiles -join ', ')"
+          }
 
           gh release create "$tag" `
             --verify-tag `
             --title "StartupGuard $tag" `
             --notes-file "$notesPath" `
-            "dist/StartupGuard-Setup-v$ver-win-x64.exe" `
-            "dist/StartupGuard-v$ver-win-x64.zip" `
-            "dist/StartupGuard-v$ver-win-x64.msix" `
-            "dist/StartupGuard-TestCert.cer"
+            @assetFiles
 
       - name: Purge temporary SSH signing key from runner
         if: always()

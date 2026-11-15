@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using Microsoft.Data.Sqlite;
 using Microsoft.Win32;
 using StartupGuard.Core.Models;
 using StartupGuard.Core.Native;
@@ -336,32 +337,103 @@ public static class UserSettingsStore
             catch { }
         }
 
-        string[] dirsToDelete =
+        try { SqliteConnection.ClearAllPools(); } catch { }
+
+        string? sharedDataParent = Directory.GetParent(SharedStorageHelper.GetSharedDataDirectory())?.FullName;
+        string? sharedLogsParent = Directory.GetParent(SharedStorageHelper.GetSharedLogsDirectory())?.FullName;
+
+        string?[] dirsToDelete =
         [
             Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "StartupGuard"),
             Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "StartupGuard"),
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "StartupGuard"),
+            sharedDataParent,
+            sharedLogsParent,
             SharedStorageHelper.GetSharedDataDirectory()
         ];
 
-        foreach (string dir in dirsToDelete.Distinct(StringComparer.OrdinalIgnoreCase))
+        foreach (string dir in dirsToDelete
+                     .Where(static p => !string.IsNullOrWhiteSpace(p))
+                     .Select(static p => p!)
+                     .Distinct(StringComparer.OrdinalIgnoreCase))
         {
-            if (string.IsNullOrWhiteSpace(dir) || !Directory.Exists(dir))
-                continue;
-            try
-            {
-                Directory.Delete(dir, recursive: true);
+            if (PurgeDirectoryCompletely(dir))
                 removedCount++;
-            }
-            catch
-            {
-                foreach (string f in Directory.EnumerateFiles(dir, "*", SearchOption.AllDirectories))
-                {
-                    try { File.SetAttributes(f, FileAttributes.Normal); File.Delete(f); removedCount++; } catch { }
-                }
-            }
         }
 
         return removedCount;
+    }
+
+    /// <summary>
+    /// 彻底清除指定目录及其全部子文件、子目录与根目录自身（含清除文件属性与释放 SQLite 连接池）
+    /// </summary>
+    public static bool PurgeDirectoryCompletely(string? dir)
+    {
+        if (string.IsNullOrWhiteSpace(dir))
+            return false;
+
+        try { SqliteConnection.ClearAllPools(); } catch { }
+        if (!Directory.Exists(dir))
+            return false;
+
+        for (int attempt = 0; attempt < 3; attempt++)
+        {
+            try
+            {
+                ClearDirectoryAttributes(dir);
+                Directory.Delete(dir, recursive: true);
+            }
+            catch
+            {
+                DeleteFilesAndSubdirectoriesBestEffort(dir);
+            }
+
+            if (!Directory.Exists(dir))
+                return true;
+
+            if (attempt < 2)
+                Thread.Sleep(150);
+        }
+
+        return !Directory.Exists(dir);
+    }
+
+    private static void ClearDirectoryAttributes(string dir)
+    {
+        try
+        {
+            var dirInfo = new DirectoryInfo(dir);
+            if ((dirInfo.Attributes & (FileAttributes.ReadOnly | FileAttributes.Hidden | FileAttributes.System)) != 0)
+                dirInfo.Attributes = FileAttributes.Normal;
+        }
+        catch { }
+
+        try
+        {
+            foreach (string entry in Directory.EnumerateFileSystemEntries(dir, "*", SearchOption.AllDirectories))
+            {
+                try { File.SetAttributes(entry, FileAttributes.Normal); } catch { }
+            }
+        }
+        catch { }
+    }
+
+    private static void DeleteFilesAndSubdirectoriesBestEffort(string dir)
+    {
+        try
+        {
+            foreach (string file in Directory.EnumerateFiles(dir, "*", SearchOption.AllDirectories))
+            {
+                try { File.SetAttributes(file, FileAttributes.Normal); File.Delete(file); } catch { }
+            }
+            foreach (string subDir in Directory.EnumerateDirectories(dir, "*", SearchOption.AllDirectories)
+                         .OrderByDescending(static p => p.Length))
+            {
+                try { File.SetAttributes(subDir, FileAttributes.Normal); Directory.Delete(subDir, recursive: true); } catch { }
+            }
+            try { File.SetAttributes(dir, FileAttributes.Normal); Directory.Delete(dir, recursive: true); } catch { }
+        }
+        catch { }
     }
 
     public static bool GetMd5ValidationIdleOnly()
