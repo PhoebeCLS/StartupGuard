@@ -1,0 +1,25 @@
+# Created with StartupGuard WinGet manifest generator
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.defaultLocale.1.12.0.schema.json
+
+PackageIdentifier: PhoebeCLS.StartupGuard
+PackageVersion: 1.0.2
+PackageLocale: zh-CN
+Publisher: PhoebeCLS
+PublisherUrl: https://github.com/PhoebeCLS
+PublisherSupportUrl: https://github.com/PhoebeCLS/StartupGuard/issues
+PackageName: StartupGuard
+PackageUrl: https://github.com/PhoebeCLS/StartupGuard
+License: GPL-3.0
+LicenseUrl: https://github.com/PhoebeCLS/StartupGuard/blob/main/LICENSE
+ShortDescription: 'Windows 10/11 原生自启项、服务、驱动与右键菜单实时守护工具。'
+Description: 'StartupGuard 用于监控与管理系统启动程序、Win32 服务、内核驱动、计划任务、系统策略以及经典与 Windows 11 现代右键菜单，支持新增改动先拦截后审核、六维规则演化匹配与桌面沙箱扩展探测。'
+Tags:
+- '自启管理'
+- '启动项'
+- '右键菜单'
+- '服务管理'
+- 'Windows'
+- 'WPF'
+ReleaseNotesUrl: https://github.com/PhoebeCLS/StartupGuard/releases/tag/v1.0.2
+ManifestType: defaultLocale
+ManifestVersion: 1.12.0

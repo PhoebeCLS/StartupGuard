@@ -1,9 +1,9 @@
 param(
-    [string]$Version = "1.0.1",
+    [string]$Version = "1.0.2",
     [string]$DotnetCli = "dotnet",
     [string[]]$Archs = @("x64", "arm64"),
     [string[]]$DeployModes = @("self-contained", "framework-dependent"),
-    [switch]$SkipNsis
+    [switch]$SkipSetup
 )
 
 $ErrorActionPreference = "Stop"
@@ -34,24 +34,24 @@ $projects = @(
     "src\StartupGuard.App\StartupGuard.App.csproj"
 )
 
-$makensis = $null
-if (-not $SkipNsis) {
-    $nsisCandidates = @(
-        (Join-Path $repoRoot "..\.tools\nsis\nsis-3.11\makensis.exe"),
-        "C:\Program Files (x86)\NSIS\makensis.exe",
-        "C:\Program Files\NSIS\makensis.exe"
+$iscc = $null
+if (-not $SkipSetup) {
+    $innoCandidates = @(
+        (Join-Path $repoRoot "..\.tools\inno6\ISCC.exe"),
+        "C:\Program Files (x86)\Inno Setup 6\ISCC.exe",
+        "C:\Program Files\Inno Setup 6\ISCC.exe"
     )
-    $makensis = $nsisCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
-    if (-not $makensis) {
-        $cmd = Get-Command makensis.exe -ErrorAction SilentlyContinue
-        if ($cmd) { $makensis = $cmd.Source }
+    $iscc = $innoCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+    if (-not $iscc) {
+        $cmd = Get-Command ISCC.exe -ErrorAction SilentlyContinue
+        if ($cmd) { $iscc = $cmd.Source }
     }
-    if (-not $makensis) {
-        throw "NSIS (makensis.exe) not found."
+    if (-not $iscc) {
+        throw "Inno Setup 6.4+ (ISCC.exe) not found."
     }
 }
 
-$nsiScript = Join-Path $installerDir "StartupGuard.nsi"
+$issScript = Join-Path $installerDir "StartupGuard.iss"
 
 foreach ($rawArch in $Archs) {
     $arch = $rawArch.Trim().ToLowerInvariant()
@@ -116,21 +116,24 @@ foreach ($rawArch in $Archs) {
             if (Test-Path $portableStage) { Remove-Item $portableStage -Recurse -Force -ErrorAction SilentlyContinue }
         }
 
-        # 2. Build NSIS Setup Installer (StartupGuard-<ver>-<arch>-<mode>-Setup.exe)
-        if (-not $SkipNsis) {
-            $setupOut = Join-Path $distDir "StartupGuard-$cleanVer-$arch-$deployMode-Setup.exe"
+        # 2. Build Inno Setup 6.4+ Installer (StartupGuard-<ver>-<arch>-<mode>-Setup.exe)
+        if (-not $SkipSetup) {
+            $setupBase = "StartupGuard-$cleanVer-$arch-$deployMode-Setup"
+            $setupOut = Join-Path $distDir "$setupBase.exe"
             if (Test-Path $setupOut) { Remove-Item $setupOut -Force }
 
-            Write-Host "Building NSIS Setup: $setupOut"
-            & $makensis `
-                "/DPRODUCT_VERSION=$cleanVer" `
-                "/DTARGET_ARCH=$arch" `
-                "/DDEPLOY_MODE=$deployMode" `
-                "/DPUBLISH_DIR=$publishDir" `
-                "/DOUT_FILE=$setupOut" `
-                $nsiScript
+            Write-Host "Building Inno Setup: $setupOut"
+            & $iscc `
+                "/Q" `
+                "/DProductVersion=$threePartVer" `
+                "/DTargetArch=$arch" `
+                "/DDeployMode=$deployMode" `
+                "/DPublishDir=$publishDir" `
+                "/DOutputDir=$distDir" `
+                "/DOutputBaseFilename=$setupBase" `
+                $issScript
             if ($LASTEXITCODE -ne 0) {
-                throw "makensis failed ($arch / $deployMode) with code $LASTEXITCODE"
+                throw "ISCC.exe failed ($arch / $deployMode) with code $LASTEXITCODE"
             }
         }
     }
