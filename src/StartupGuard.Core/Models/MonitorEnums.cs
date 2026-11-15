@@ -30,7 +30,9 @@ public enum InterceptionAction : byte
     /// <summary>还原到变更前原始字节快照</summary>
     RestorePreviousSnapshot = 4,
     /// <summary>回滚为延迟启动 (Start = 2, DelayedAutostart = 1)</summary>
-    RollbackToDelayedAuto = 5
+    RollbackToDelayedAuto = 5,
+    /// <summary>仅关闭弹窗不做任何系统或规则修改（仅记录日志供后续手动处置）</summary>
+    DismissWithoutChange = 6
 }
 
 /// <summary>

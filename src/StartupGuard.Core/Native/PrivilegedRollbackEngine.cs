@@ -1325,7 +1325,7 @@ public static unsafe partial class PrivilegedRollbackEngine
         string? activeUserSid = null,
         Func<TargetProgramFeatures, InterceptionAction, bool>? customTestHandler = null)
     {
-        if (action == InterceptionAction.Allow)
+        if (action is InterceptionAction.Allow or InterceptionAction.DismissWithoutChange)
             return true;
 
         // 内核驱动禁止物理删除 .sys 或执行 DeleteEntry，统一收敛为 RollbackToDisabled (Start=4) 或 RollbackToDemand (Start=3)
@@ -1697,6 +1697,7 @@ public static unsafe partial class PrivilegedRollbackEngine
         InterceptionAction.RollbackToDisabled => "禁止启动",
         InterceptionAction.DeleteEntry => "删除移除",
         InterceptionAction.RestorePreviousSnapshot => "恢复原状",
+        InterceptionAction.DismissWithoutChange => "未处置（仅记录）",
         _ => "处置"
     };
 }

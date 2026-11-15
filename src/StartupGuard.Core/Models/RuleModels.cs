@@ -341,6 +341,9 @@ public sealed class AuditLogRecord
             if (raw.Contains("待审", StringComparison.OrdinalIgnoreCase) ||
                 raw.Contains("暂存", StringComparison.OrdinalIgnoreCase) ||
                 raw.Contains("等待", StringComparison.OrdinalIgnoreCase) ||
+                raw.Contains("未处置", StringComparison.OrdinalIgnoreCase) ||
+                raw.Contains("关闭", StringComparison.OrdinalIgnoreCase) ||
+                raw.Contains("Dismiss", StringComparison.OrdinalIgnoreCase) ||
                 raw.Contains("Pending", StringComparison.OrdinalIgnoreCase))
                 return "待审核";
 
@@ -387,7 +390,19 @@ public sealed class AuditLogRecord
         ? "#D13438"
         : (DisplayActionText is "设为手动" or "延迟自启" or "待审核" ? "#FFB900" : "#107C41");
 
-    public bool CanUndo => ActionTaken.Contains("阻止") || ActionTaken.Contains("Block") || ActionTaken.Contains("Rollback") || ActionTaken.Contains("手动") || ActionTaken.Contains("禁用") || ActionTaken.Contains("禁止") || ActionTaken.Contains("延迟") || ActionTaken.Contains("Intercepted");
+    public bool IsPendingManualAction =>
+        ActionTaken.Contains("未处置", StringComparison.OrdinalIgnoreCase) ||
+        ActionTaken.Contains("待审", StringComparison.OrdinalIgnoreCase) ||
+        ActionTaken.Contains("关闭", StringComparison.OrdinalIgnoreCase) ||
+        ActionTaken.Contains("Dismiss", StringComparison.OrdinalIgnoreCase);
+
+    public bool CanUndo =>
+        IsPendingManualAction ||
+        ActionTaken.Contains("阻止") || ActionTaken.Contains("Block") || ActionTaken.Contains("Rollback") ||
+        ActionTaken.Contains("手动") || ActionTaken.Contains("禁用") || ActionTaken.Contains("禁止") ||
+        ActionTaken.Contains("延迟") || ActionTaken.Contains("Intercepted");
+
+    public string LogActionButtonText => IsPendingManualAction ? "手动处置" : "恢复状态";
 }
 
 /// <summary>

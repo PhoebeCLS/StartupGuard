@@ -579,7 +579,11 @@ internal sealed class TrayApplicationContext : ApplicationContext
         {
             try
             {
-                if (decision.ChosenAction != InterceptionAction.Allow && !string.IsNullOrEmpty(decision.LocationKey))
+                bool isDismiss = decision.ChosenAction == InterceptionAction.DismissWithoutChange;
+                bool effectiveRemember = decision.RememberRule && !isDismiss;
+
+                if (decision.ChosenAction is not (InterceptionAction.Allow or InterceptionAction.DismissWithoutChange) &&
+                    !string.IsNullOrEmpty(decision.LocationKey))
                 {
                     BinaryPipeSerializer.NotifyServiceSuppressSelfMutation(
                         decision.LocationKey,
@@ -605,8 +609,13 @@ internal sealed class TrayApplicationContext : ApplicationContext
                     InterceptionAction.DeleteEntry => "用户弹窗阻止：已删除",
                     InterceptionAction.RestorePreviousSnapshot => "用户弹窗阻止：已恢复快照",
                     InterceptionAction.Allow => "用户弹窗放行：允许启动",
+                    InterceptionAction.DismissWithoutChange => "已关闭弹窗（未处置）",
                     _ => decision.ChosenAction.ToString()
                 };
+
+                string diagnosticText = isDismiss
+                    ? "用户关闭弹窗或未勾选处置项，未修改系统或规则，可在日志中手动操作"
+                    : (effectiveRemember ? "用户在拦截提示弹窗中选择阻止并沉淀永久规则" : "用户在拦截提示弹窗中做出的处置决策");
 
                 repo.WriteAuditLog(
                     null,
@@ -617,11 +626,11 @@ internal sealed class TrayApplicationContext : ApplicationContext
                     decision.ChosenAction.ToString(),
                     readableAction,
                     100.0,
-                    decision.RememberRule ? "用户在拦截提示弹窗中选择阻止并沉淀永久规则" : "用户在拦截提示弹窗中做出的处置决策");
+                    diagnosticText);
 
                 SharedStorageHelper.LogDiagnostic("TrayHost", $"Direct audit log written: {readableAction} for {decision.LocationKey}");
 
-                if (decision.RememberRule)
+                if (effectiveRemember)
                 {
                     var newRule = new RuleRecord
                     {

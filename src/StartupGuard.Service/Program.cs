@@ -728,23 +728,26 @@ public static class Program
             return;
 
         // 登记 12 秒主动决策保护窗，防止同一批次中用户在思考/点击“阻止所选”期间触发同一位置二次弹窗
+        bool isDismiss = decision.ChosenAction == InterceptionAction.DismissWithoutChange;
+        bool effectiveRememberRule = decision.RememberRule && !isDismiss;
+
         RecordRecentUserDecision(target.LocationKeyOrIdentifier, decision.ChosenAction);
         _differ.SuppressLocationKeyMutation(
             target.LocationKeyOrIdentifier,
             12.0,
             _activeInteractiveUserSid,
             target.TargetBinaryPath,
-            expectedEnabledState: decision.ChosenAction == InterceptionAction.Allow);
+            expectedEnabledState: isDismiss ? null : (decision.ChosenAction == InterceptionAction.Allow));
 
-        // 若用户选择了阻止/回滚动作，立即调用强权限回滚器并在后台启动 3 次验证重试
-        if (decision.ChosenAction != InterceptionAction.Allow)
+        // 仅当用户明确选择了阻止/回滚动作时执行强权限修改；允许与关闭弹窗均不改动系统状态
+        if (decision.ChosenAction is not (InterceptionAction.Allow or InterceptionAction.DismissWithoutChange))
         {
             ExecuteRollbackForTarget(target, decision.ChosenAction);
             _ = Task.Run(() => VerifyAndRetryRollbackAsync(target, decision.ChosenAction));
         }
 
-        // 若用户勾选了“永久拦截”，持久化至 SQLite 规则库
-        if (decision.RememberRule)
+        // 若用户勾选了“创建规则”且未取消操作，持久化至 SQLite 规则库
+        if (effectiveRememberRule)
         {
             var newRule = new RuleRecord
             {
@@ -791,8 +794,13 @@ public static class Program
             InterceptionAction.DeleteEntry => "用户弹窗阻止：已删除",
             InterceptionAction.RestorePreviousSnapshot => "用户弹窗阻止：已恢复快照",
             InterceptionAction.Allow => "用户弹窗放行：允许启动",
+            InterceptionAction.DismissWithoutChange => "已关闭弹窗（未处置）",
             _ => decision.ChosenAction.ToString()
         };
+
+        string diagnosticText = decision.ChosenAction == InterceptionAction.DismissWithoutChange
+            ? "用户关闭弹窗或未勾选处置项，未修改系统或规则，可在日志中手动操作"
+            : (effectiveRememberRule ? "用户在拦截提示弹窗中选择阻止并沉淀永久规则" : "用户在拦截提示弹窗中做出的处置决策");
 
         _sqliteRepo.WriteAuditLog(
             eval?.MatchedRule?.RuleId,
@@ -803,12 +811,12 @@ public static class Program
             target.NewStateSummary,
             readableAction,
             100.0,
-            decision.RememberRule ? "用户在拦截提示弹窗中选择阻止并沉淀永久规则" : "用户在拦截提示弹窗中做出的处置决策",
+            diagnosticText,
             target.SourceProcessName);
 
         SharedStorageHelper.LogDiagnostic("Service",
             $"HandleUserDecision processed: {readableAction} for {target.LocationKeyOrIdentifier}, " +
-            $"remember={decision.RememberRule}, mode={decision.ChosenRuleMode}, ruleId={eval?.MatchedRule?.RuleId ?? 0}");
+            $"remember={effectiveRememberRule}, mode={decision.ChosenRuleMode}, ruleId={eval?.MatchedRule?.RuleId ?? 0}");
 
         ProcessQoSAndMemoryManager.TrimWorkingSetMemory();
     }

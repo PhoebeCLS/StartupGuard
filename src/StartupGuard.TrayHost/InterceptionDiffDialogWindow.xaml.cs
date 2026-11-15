@@ -125,22 +125,15 @@ public partial class InterceptionDiffDialogWindow : FluentWindow
         Closed += (_, _) =>
         {
             Microsoft.Win32.SystemEvents.UserPreferenceChanged -= OnSystemUserPreferenceChanged;
+            foreach (var item in _capturedItems)
+            {
+                item.PropertyChanged -= OnCapturedItemPropertyChanged;
+            }
+
             if (!_decisionSent)
             {
                 _decisionSent = true;
-                var fallbackDecisions = _capturedItems.Select(item => new UserDecisionPayload
-                {
-                    CorrelationId = item.CorrelationId,
-                    ChosenAction = InterceptionAction.Allow,
-                    RememberRule = false,
-                    ChosenRuleMode = RuleMatchMode.PermanentAdaptive,
-                    Category = item.Evaluation.Target.Category,
-                    TargetBinaryPath = item.TargetPath,
-                    LocationKey = item.LocationKey,
-                    DisplayName = item.DisplayName
-                }).ToList();
-
-                _onBatchDecisionMade(fallbackDecisions);
+                _onBatchDecisionMade(BuildDismissDecisions(_capturedItems));
             }
         };
     }
@@ -234,8 +227,17 @@ public partial class InterceptionDiffDialogWindow : FluentWindow
 
         PopulateActionsForCategory(vm, target.Category);
 
+        vm.PropertyChanged += OnCapturedItemPropertyChanged;
         _capturedItems.Add(vm);
         UpdateHeaderSummary();
+    }
+
+    private void OnCapturedItemPropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName == nameof(CapturedItemViewModel.IsSelected))
+        {
+            UpdateHeaderSummary();
+        }
     }
 
     private static string CleanDisplayName(string rawName, string targetPath, string locationKey)
@@ -397,18 +399,88 @@ public partial class InterceptionDiffDialogWindow : FluentWindow
                             ?? vm.AvailableActions[0];
     }
 
+    public static bool ShouldUseCloseButton(int selectedCount) => selectedCount <= 0;
+
+    public static string ResolvePrimaryActionButtonText(int totalCount, int selectedCount, bool rememberRule)
+    {
+        if (ShouldUseCloseButton(selectedCount))
+        {
+            return "关闭";
+        }
+
+        if (rememberRule)
+        {
+            return "创建规则并阻止";
+        }
+
+        return totalCount > 1 ? "阻止所选" : "阻止";
+    }
+
+    public static List<UserDecisionPayload> BuildDismissDecisions(IEnumerable<CapturedItemViewModel> items)
+    {
+        return items.Select(item => new UserDecisionPayload
+        {
+            CorrelationId = item.CorrelationId,
+            ChosenAction = InterceptionAction.DismissWithoutChange,
+            RememberRule = false,
+            ChosenRuleMode = RuleMatchMode.PermanentAdaptive,
+            Category = item.Evaluation.Target.Category,
+            TargetBinaryPath = item.TargetPath,
+            LocationKey = item.LocationKey,
+            DisplayName = item.DisplayName
+        }).ToList();
+    }
+
+    public static List<UserDecisionPayload> BuildSubmittedDecisions(
+        IReadOnlyList<CapturedItemViewModel> items,
+        bool isAllowAll,
+        bool rememberRule,
+        RuleMatchMode ruleMode)
+    {
+        if (!isAllowAll && !items.Any(item => item.IsSelected))
+        {
+            return BuildDismissDecisions(items);
+        }
+
+        var decisions = new List<UserDecisionPayload>(items.Count);
+        foreach (var item in items)
+        {
+            InterceptionAction chosen = isAllowAll
+                ? InterceptionAction.Allow
+                : (item.IsSelected
+                    ? (item.SelectedAction?.Action ?? InterceptionAction.RollbackToDemand)
+                    : InterceptionAction.Allow);
+
+            decisions.Add(new UserDecisionPayload
+            {
+                CorrelationId = item.CorrelationId,
+                ChosenAction = chosen,
+                RememberRule = !isAllowAll && rememberRule && item.IsSelected,
+                ChosenRuleMode = ruleMode,
+                Category = item.Evaluation.Target.Category,
+                TargetBinaryPath = item.TargetPath,
+                LocationKey = item.LocationKey,
+                DisplayName = item.DisplayName
+            });
+        }
+
+        return decisions;
+    }
+
     private void UpdateHeaderSummary()
     {
-        if (_capturedItems.Count > 1)
-        {
-            TxtHeaderTitle.Text = $"检测到 {_capturedItems.Count} 个新增启动或扩展项";
-            BtnBlockSelected.Content = ChkPermanentBlock.IsChecked == true ? "创建规则并阻止" : "阻止所选";
-        }
-        else
-        {
-            TxtHeaderTitle.Text = "检测到新增启动或扩展项";
-            BtnBlockSelected.Content = ChkPermanentBlock.IsChecked == true ? "创建规则并阻止" : "阻止";
-        }
+        int totalCount = _capturedItems.Count;
+        int selectedCount = _capturedItems.Count(item => item.IsSelected);
+        bool rememberRule = ChkPermanentBlock.IsChecked == true;
+        bool useClose = ShouldUseCloseButton(selectedCount);
+
+        TxtHeaderTitle.Text = totalCount > 1
+            ? $"检测到 {totalCount} 个新增启动或扩展项"
+            : "检测到新增启动或扩展项";
+
+        BtnBlockSelected.Content = ResolvePrimaryActionButtonText(totalCount, selectedCount, rememberRule);
+        BtnBlockSelected.Appearance = useClose ? ControlAppearance.Secondary : ControlAppearance.Danger;
+        ChkPermanentBlock.IsEnabled = !useClose;
     }
 
     private void HeaderDragMove_MouseLeftButtonDown(object sender, System.Windows.Input.MouseButtonEventArgs e)
@@ -473,33 +545,7 @@ public partial class InterceptionDiffDialogWindow : FluentWindow
             ? RuleMatchMode.StrictCurrentVersion
             : RuleMatchMode.PermanentAdaptive;
 
-        var decisions = new List<UserDecisionPayload>();
-        foreach (var item in _capturedItems)
-        {
-            InterceptionAction chosen;
-            if (isAllowAll)
-            {
-                chosen = InterceptionAction.Allow;
-            }
-            else
-            {
-                chosen = item.IsSelected
-                    ? (item.SelectedAction?.Action ?? InterceptionAction.RollbackToDemand)
-                    : InterceptionAction.Allow;
-            }
-
-            decisions.Add(new UserDecisionPayload
-            {
-                CorrelationId = item.CorrelationId,
-                ChosenAction = chosen,
-                RememberRule = rememberRule && item.IsSelected,
-                ChosenRuleMode = ruleMode,
-                Category = item.Evaluation.Target.Category,
-                TargetBinaryPath = item.TargetPath,
-                LocationKey = item.LocationKey,
-                DisplayName = item.DisplayName
-            });
-        }
+        var decisions = BuildSubmittedDecisions(_capturedItems, isAllowAll, rememberRule, ruleMode);
 
         _onBatchDecisionMade(decisions);
         Close();
