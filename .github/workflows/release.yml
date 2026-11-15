@@ -125,19 +125,11 @@ jobs:
 
           Write-Host "Resolved release version: $newTag (previous: $latestTag)"
 
-      - name: Build release artifacts, WinGet manifests & capture screenshots
+      - name: Build release artifacts & capture screenshots
         shell: pwsh
         run: |
           ./scripts/build_release.ps1 -Version "${{ env.APP_VERSION }}"
           ./scripts/capture_screenshots.ps1 -AppExe "artifacts/publish/win-x64-self-contained/StartupGuard.App.exe" -AssetsDir "assets"
-          $wingetDir = "packaging/winget/manifests/p/PhoebeCLS/StartupGuard/${{ env.APP_VERSION }}"
-          ./scripts/New-WingetManifest.ps1 -Version "${{ env.APP_VERSION }}" -DistDir "dist" -OutputDirectory $wingetDir | Out-Null
-          if (Get-Command winget.exe -ErrorAction SilentlyContinue) {
-            winget validate --manifest $wingetDir --disable-interactivity
-            if ($LASTEXITCODE -ne 0 -and $LASTEXITCODE -ne -1978335192) {
-              throw "winget validate failed with code $LASTEXITCODE"
-            }
-          }
 
       - name: Configure SSH Commit & Tag Signing Key (Ephemeral)
         shell: pwsh
@@ -166,17 +158,17 @@ jobs:
           git config commit.gpgsign true
           git config tag.gpgsign true
 
-      - name: Commit updated screenshots & WinGet manifests (SSH Verified) if changed
+      - name: Commit updated screenshots (SSH Verified) if changed
         shell: pwsh
         run: |
-          git add assets/*.jpg packaging/winget/
-          $changed = git status --porcelain assets/ packaging/winget/
+          git add assets/*.jpg
+          $changed = git status --porcelain assets/
           if ($changed) {
-            git commit -S -m "chore(release): update screenshots and winget manifests for ${{ env.RELEASE_TAG }} [skip ci]"
+            git commit -S -m "chore(release): update screenshots for ${{ env.RELEASE_TAG }} [skip ci]"
             git push origin HEAD:main
           }
           else {
-            Write-Host "UI screenshots and WinGet manifests unchanged, keeping signed HEAD commit."
+            Write-Host "UI screenshots unchanged, keeping signed HEAD commit."
           }
 
       - name: Create SSH-Signed Tag and Auto Changelog Release
@@ -282,7 +274,7 @@ jobs:
           [void]$sb.AppendLine()
           [void]$sb.AppendLine("## 📥 下载版本说明（Windows 10/11 x64 & ARM64）")
           [void]$sb.AppendLine()
-          [void]$sb.AppendLine("> 仅提供 Windows 10/11 64 位（`x64` / `arm64`）版本（ETW 内核会话不兼容 32 位 x86）。`framework-dependent` 安装版支持自动检测并安装 [.NET 10 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/10.0)；安装版默认在卸载时清除全部个人数据及 `C:\ProgramData\StartupGuard` 目录，可在卸载确认框取消勾选保留规则与日志。WinGet 包清单位于仓库 `packaging/winget/manifests/p/PhoebeCLS/StartupGuard/$ver`。")
+          [void]$sb.AppendLine("> 仅提供 Windows 10/11 64 位（$($bt)x64$($bt) / $($bt)arm64$($bt)）版本（ETW 内核会话不兼容 32 位 x86）。$($bt)framework-dependent$($bt) 安装版支持自动检测并安装 [.NET 10 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/10.0)；安装版默认在卸载时清除全部个人数据及 $($bt)C:\ProgramData\StartupGuard$($bt) 目录，可在卸载确认框取消勾选保留规则与日志。")
           [void]$sb.AppendLine()
           [void]$sb.AppendLine("| 类型 | $($bt)self-contained$($bt)（免装运行库，推荐） | $($bt)framework-dependent$($bt)（体积小，需 .NET 10 桌面运行时） |")
           [void]$sb.AppendLine("| :--- | :--- | :--- |")

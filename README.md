@@ -75,8 +75,7 @@
    - 自动安装主程序、配置 `LocalSystem` 后台守护服务与托盘开机自启、创建桌面与开始菜单快捷方式；支持跟随系统深浅主题切换，`framework-dependent` 版本检测到缺少 `.NET 10 Desktop Runtime` 时自动下载安装。卸载时默认勾选清理个人数据及 `C:\ProgramData\StartupGuard` 目录（可按需取消保留规则与日志）。
 2. **绿色便携压缩包**：`StartupGuard-X.Y.Z-<arch>-<self-contained|framework-dependent>-portable.zip`
    - 解压至任意目录运行 `StartupGuard.App.exe` 即可使用，并在界面中按需注册或切换后台守护服务状态。
-3. **WinGet 包清单**：位于 `packaging/winget/manifests/p/PhoebeCLS/StartupGuard/`，支持本地 `winget install --manifest ...` 或提交至 `winget-pkgs`。
-4. **部署变体选择建议**：
+3. **部署变体选择建议**：
    - `self-contained`（独立自包含）：内置 .NET 10 运行时，开箱即用。
    - `framework-dependent`（依赖框架）：安装包体积更小，需系统已安装 [.NET 10 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/10.0)。
 
@@ -97,10 +96,6 @@ dotnet test tests/StartupGuard.Tests/StartupGuard.Tests.csproj -c Release -p:Pla
 
 # 3. 仅生成深浅双模界面预览截图
 ./scripts/capture_screenshots.ps1
-
-# 4. 为已构建的 dist/ 产物生成 WinGet 清单并校验
-$manifestDir = @(& ./scripts/New-WingetManifest.ps1 -Version "1.0.2")[-1]
-winget validate --manifest "$manifestDir"
 ```
 
 ---

@@ -2165,7 +2165,6 @@ public class Feedback12BatchTests
         string repoRoot = FindRepoRoot();
         string iss = File.ReadAllText(Path.Combine(repoRoot, "installer", "StartupGuard.iss"));
         string buildScript = File.ReadAllText(Path.Combine(repoRoot, "scripts", "build_release.ps1"));
-        string wingetScript = File.ReadAllText(Path.Combine(repoRoot, "scripts", "New-WingetManifest.ps1"));
         string releaseYml = File.ReadAllText(Path.Combine(repoRoot, ".github", "workflows", "release.yml"));
         string readme = File.ReadAllText(Path.Combine(repoRoot, "README.md"));
 
@@ -2189,8 +2188,10 @@ public class Feedback12BatchTests
         int deleteServiceIdx = uninstallSection.IndexOf("'delete {#MyServiceName}'", StringComparison.Ordinal);
         Assert.True(resetCallIdx > 0 && deleteServiceIdx > resetCallIdx);
 
-        // 2. WinGet 清单生成脚本与 CI 发行配置检查（无 MSIX，保留 x64 / arm64 8 个产物）
+        // 2. CI 发行配置检查（无 MSIX 与 WinGet，保留 x64 / arm64 8 个产物）
         Assert.False(File.Exists(Path.Combine(repoRoot, "installer", "AppxManifest.xml")));
+        Assert.False(File.Exists(Path.Combine(repoRoot, "scripts", "New-WingetManifest.ps1")));
+        Assert.False(Directory.Exists(Path.Combine(repoRoot, "packaging", "winget")));
         Assert.Contains("ISCC.exe", buildScript);
         Assert.DoesNotContain(".msix", buildScript, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("@(\"x64\", \"arm64\")", buildScript);
@@ -2198,14 +2199,12 @@ public class Feedback12BatchTests
         Assert.Contains("-portable.zip", buildScript);
         Assert.Contains("-Setup.exe", buildScript);
 
-        Assert.Contains("InstallerType: inno", wingetScript);
-        Assert.Contains("PhoebeCLS.StartupGuard", wingetScript);
-
         Assert.DoesNotContain(".msix", releaseYml, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("winget", releaseYml, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("发行版本初始规则库完全为空", releaseYml);
-        Assert.Contains("New-WingetManifest.ps1", releaseYml);
         Assert.Contains("| File | SHA256 |", releaseYml);
         Assert.DoesNotContain(".msix", readme, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("winget", readme, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
