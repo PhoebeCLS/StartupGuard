@@ -2102,6 +2102,9 @@ public class Feedback12BatchTests
         Assert.Contains("BuildRuleActionOptions(", mainCs);
         Assert.Contains("TryValidateSafeFolderRuleTarget(", mainCs);
         Assert.Contains("Microsoft.Win32.OpenFolderDialog", mainCs);
+        Assert.Contains("SyncLogsPageHeaderActionButtons(", mainCs);
+        Assert.Contains("BtnClearAllLogs.Visibility = showingRules ? Visibility.Collapsed : Visibility.Visible;", mainCs);
+        Assert.Contains("BtnOpenCreateRuleDialog.Visibility = showingRules ? Visibility.Visible : Visibility.Collapsed;", mainCs);
 
         int driverCaseStart = mainCs.IndexOf("MonitorCategory.KernelDriver =>", StringComparison.Ordinal);
         int driverCaseEnd = mainCs.IndexOf("MonitorCategory.ScheduledTask =>", driverCaseStart, StringComparison.Ordinal);

@@ -130,6 +130,58 @@ public class Feedback10BatchTests
         Assert.Single(photoshop.Items);
     }
 
+    [Fact]
+    public void AppGroupingHelper_SeparatesDistinctAppsUnderSameUserProfileDownloadsAndArchiveContainers()
+    {
+        var inputs = new List<AppGroupingHelper.AppAttributionInput<string>>
+        {
+            new(
+                Item: "onedrive-lists",
+                Category: MonitorCategory.StartupItem,
+                DisplayName: "Microsoft.Lists",
+                PathOrCommand: @"C:\Users\DemoUser\AppData\Local\Microsoft\OneDrive\26.198.1011.0006\OneDrive.Sync.Service.exe",
+                LocationKey: @"HKCU\Software\Microsoft\Windows\CurrentVersion\Run\Microsoft.Lists",
+                Publisher: "Microsoft Corporation"),
+            new(
+                Item: "suite-a-service",
+                Category: MonitorCategory.Win32Service,
+                DisplayName: "SuiteAService",
+                PathOrCommand: @"""C:\Users\DemoUser\Downloads\Archieve\SuiteA\App\SuiteA\SuiteAService.exe""",
+                LocationKey: @"HKLM\SYSTEM\CurrentControlSet\Services\SuiteAService",
+                Publisher: "Sample Utilities Vendor"),
+            new(
+                Item: "suite-b-scheduler",
+                Category: MonitorCategory.ScheduledTask,
+                DisplayName: "SuiteB Scheduler",
+                PathOrCommand: @"""C:\Users\DemoUser\Downloads\Archieve\SuiteB\App\SuiteB\Scheduler.exe""",
+                LocationKey: @"\SuiteB Scheduler",
+                Publisher: "Sample Utilities Vendor",
+                ProductName: "SuiteB"),
+            new(
+                Item: "suite-b-skipuac",
+                Category: MonitorCategory.ScheduledTask,
+                DisplayName: "SuiteB SkipUAC (DemoUser)",
+                PathOrCommand: @"""C:\Users\DemoUser\Downloads\Archieve\SuiteB\App\SuiteB\SuiteB.exe""",
+                LocationKey: @"\SuiteB SkipUAC (DemoUser)",
+                Publisher: "Sample Utilities Vendor",
+                ProductName: "SuiteB")
+        };
+
+        var groups = AppGroupingHelper.ClusterByApplication(inputs);
+
+        Assert.Equal(3, groups.Count);
+        var listsGroup = Assert.Single(groups, g => g.Items.Contains("onedrive-lists"));
+        Assert.Single(listsGroup.Items);
+        Assert.Equal("OneDrive", listsGroup.AppTitle);
+
+        var suiteAGroup = Assert.Single(groups, g => g.Items.Contains("suite-a-service"));
+        Assert.Single(suiteAGroup.Items);
+
+        var suiteBGroup = Assert.Single(groups, g => g.Items.Contains("suite-b-scheduler"));
+        Assert.Equal(2, suiteBGroup.Items.Count);
+        Assert.Contains("suite-b-skipuac", suiteBGroup.Items);
+    }
+
     [Theory]
     [InlineData("Sample Context Menu ShellExtension", @"C:\ProgramData\samplesuite\shellextension\SampleShellExtensionx64.dll", "samplesuite")]
     [InlineData("7-zip", @"C:\Program Files\7-Zip\7-zip.dll", "7-Zip")]

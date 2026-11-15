@@ -31,7 +31,10 @@ public static partial class AppGroupingHelper
     private static readonly HashSet<string> GenericFolders = new(StringComparer.OrdinalIgnoreCase)
     {
         "program files", "program files (x86)", "programdata", "appdata", "local", "roaming",
-        "locallow", "users", "windows", "system32", "syswow64", "drivers", "servicing",
+        "locallow", "users", "documents and settings", "public", "default", "common",
+        "downloads", "download", "desktop", "documents", "my documents", "pictures", "videos", "music",
+        "userdata", "profiles", "profile", "temp", "tmp", "cache",
+        "windows", "system32", "syswow64", "drivers", "servicing",
         "windowsapps", "common files", "bin", "bin64", "bin32", "x64", "x86", "amd64",
         "win64", "win32", "arm64", "app", "apps", "application", "programs", "program",
         "root", "release", "debug", "shellextension", "shellextensions", "shellex",
@@ -39,11 +42,25 @@ public static partial class AppGroupingHelper
         "daemon", "runtime", "current", "latest", "plugins", "plugin", "components"
     };
 
+    private static readonly HashSet<string> NestedContainerFolders = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "archive", "archives", "archieve", "portable", "portableapps",
+        "soft", "software", "softwares", "green", "tools", "tool", "utilities", "myapps"
+    };
+
     private static readonly HashSet<string> MultiProductVendorFolders = new(StringComparer.OrdinalIgnoreCase)
     {
         "microsoft", "adobe", "tencent", "alibaba", "bytedance", "netease", "baidu",
         "google", "autodesk", "jetbrains", "oracle", "intel", "amd", "nvidia", "realtek",
-        "lenovo", "dell", "hp", "asus", "huawei", "xiaomi", "kingsoft", "360"
+        "lenovo", "dell", "hp", "asus", "huawei", "xiaomi", "kingsoft", "360",
+        "iobit", "wondershare", "easeus"
+    };
+
+    private static readonly HashSet<string> GenericRoleTokens = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "driver", "scheduler", "service", "services", "updater", "update",
+        "helper", "monitor", "manager", "launcher", "assistant", "skipuac",
+        "lists", "windows", "sync"
     };
 
     private static readonly HashSet<string> GenericPublishers = new(StringComparer.OrdinalIgnoreCase)
@@ -452,7 +469,19 @@ public static partial class AppGroupingHelper
         for (int i = 1; i < segments.Length; i++)
         {
             string seg = segments[i].Trim();
-            if (GenericFolders.Contains(seg) || VersionFolderRegex().IsMatch(seg))
+
+            // 跳过 Windows 用户档案目录段 (C:\Users\<Username>\...)，防止同一用户名下的所有软件被误聚为同一应用
+            if (seg.Equals("Users", StringComparison.OrdinalIgnoreCase) ||
+                seg.Equals("Documents and Settings", StringComparison.OrdinalIgnoreCase))
+            {
+                if (i + 1 < segments.Length)
+                    i++;
+                continue;
+            }
+
+            if (GenericFolders.Contains(seg) ||
+                VersionFolderRegex().IsMatch(seg) ||
+                (i + 1 < segments.Length && NestedContainerFolders.Contains(seg)))
                 continue;
 
             // 如 Program Files\Microsoft\Edge 或 AppData\Local\Tencent\WeChat -> 多产品厂商目录向下一级取具体产品
@@ -481,14 +510,18 @@ public static partial class AppGroupingHelper
             string cleaned = CleanStemForKeyword(part);
             if (cleaned.Length >= 4 &&
                 !GenericFolders.Contains(cleaned) &&
+                !NestedContainerFolders.Contains(cleaned) &&
                 !MultiProductVendorFolders.Contains(cleaned) &&
+                !GenericRoleTokens.Contains(cleaned) &&
                 !IsGenericBinaryName(cleaned))
                 target.Add(cleaned.ToLowerInvariant());
         }
         string whole = CleanStemForKeyword(raw);
         if (whole.Length >= 4 &&
             !GenericFolders.Contains(whole) &&
+            !NestedContainerFolders.Contains(whole) &&
             !MultiProductVendorFolders.Contains(whole) &&
+            !GenericRoleTokens.Contains(whole) &&
             !IsGenericBinaryName(whole))
             target.Add(whole.ToLowerInvariant());
     }

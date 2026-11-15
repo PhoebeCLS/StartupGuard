@@ -1771,6 +1771,11 @@ public partial class MainWindow : FluentWindow
                     catch { }
                 }
 
+                if (normalizedTag == "PageLogs")
+                {
+                    SyncLogsPageHeaderActionButtons(FilterRulesShowRules?.IsChecked == true);
+                }
+
                 if (!App.IsScreenshotMode)
                 {
                     if (normalizedTag == "PageLogs")
@@ -2334,6 +2339,14 @@ public partial class MainWindow : FluentWindow
         PlayTabSwitchAnimation(ListViewAuditCenter);
     }
 
+    private void SyncLogsPageHeaderActionButtons(bool showingRules)
+    {
+        if (BtnOpenCreateRuleDialog != null)
+            BtnOpenCreateRuleDialog.Visibility = showingRules ? Visibility.Visible : Visibility.Collapsed;
+        if (BtnClearAllLogs != null)
+            BtnClearAllLogs.Visibility = showingRules ? Visibility.Collapsed : Visibility.Visible;
+    }
+
     private void FilterRules_Checked(object sender, RoutedEventArgs e)
     {
         if (!_isInitialized) return;
@@ -2346,7 +2359,7 @@ public partial class MainWindow : FluentWindow
             LogsDayScrollViewer.Visibility = Visibility.Collapsed;
             if (PanelLogStatusFilters != null) PanelLogStatusFilters.Visibility = Visibility.Collapsed;
             if (PanelRulesGroupSwitch != null) PanelRulesGroupSwitch.Visibility = Visibility.Visible;
-            if (BtnOpenCreateRuleDialog != null) BtnOpenCreateRuleDialog.Visibility = Visibility.Visible;
+            SyncLogsPageHeaderActionButtons(showingRules: true);
             RefreshRules();
             PlayTabSwitchAnimation(RulesScrollViewer);
         }
@@ -2356,7 +2369,7 @@ public partial class MainWindow : FluentWindow
             LogsDayScrollViewer.Visibility = Visibility.Visible;
             if (PanelLogStatusFilters != null) PanelLogStatusFilters.Visibility = Visibility.Visible;
             if (PanelRulesGroupSwitch != null) PanelRulesGroupSwitch.Visibility = Visibility.Collapsed;
-            if (BtnOpenCreateRuleDialog != null) BtnOpenCreateRuleDialog.Visibility = Visibility.Collapsed;
+            SyncLogsPageHeaderActionButtons(showingRules: false);
             RefreshLogs();
             PlayTabSwitchAnimation(LogsDayScrollViewer);
         }
