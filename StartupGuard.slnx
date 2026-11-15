@@ -1,0 +1,13 @@
+<Solution>
+  <Configurations>
+    <Platform Name="ARM64" />
+    <Platform Name="x64" />
+  </Configurations>
+  <Folder Name="/src/">
+    <Project Path="src/StartupGuard.Core/StartupGuard.Core.csproj" />
+    <Project Path="src/StartupGuard.Service/StartupGuard.Service.csproj" />
+    <Project Path="src/StartupGuard.TrayHost/StartupGuard.TrayHost.csproj" />
+    <Project Path="src/StartupGuard.ProbeHost/StartupGuard.ProbeHost.csproj" />
+    <Project Path="src/StartupGuard.App/StartupGuard.App.csproj" />
+  </Folder>
+</Solution>

@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>StartupGuard.Service</RootNamespace>
+    <AssemblyName>StartupGuard.Service</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\StartupGuard.Core\StartupGuard.Core.csproj" />
+    <InternalsVisibleTo Include="StartupGuard.Tests" />
+  </ItemGroup>
+</Project>

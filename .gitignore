@@ -1,0 +1,37 @@
+## [Bb]in/
+## [Oo]bj/
+## [Pp]ublish/
+**/[Bb]in/
+**/[Oo]bj/
+**/[Pp]ublish/
+artifacts/
+dist/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+.vs/
+.idea/
+*.swp
+*~
+.DS_Store
+
+## Secrets, Private Keys & Test Certificates (Never Commit!)
+*.pfx
+*.cer
+*.p12
+*.snk
+*.key
+*_signing
+*_signing.pub
+
+## Outputs
+*.exe
+*.dll
+*.pdb
+*.msix
+*.log
+*.db
+*.db-shm
+*.db-wal
+!assets/
