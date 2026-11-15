@@ -25,9 +25,9 @@ AppsAndFeaturesEntries:
 Installers:
 - Architecture: x64
   InstallerUrl: https://github.com/PhoebeCLS/StartupGuard/releases/download/v1.0.2/StartupGuard-1.0.2-x64-self-contained-Setup.exe
-  InstallerSha256: bd228ff2063930443a9e530bbfd998812a06502b85c8cc8a50389ec2dfa12322
+  InstallerSha256: a1c9eecf1ba9442f479bf413a9742ca42c31f243c1ee3ffe962a5469fecb2c24
 - Architecture: arm64
   InstallerUrl: https://github.com/PhoebeCLS/StartupGuard/releases/download/v1.0.2/StartupGuard-1.0.2-arm64-self-contained-Setup.exe
-  InstallerSha256: 382108c34afc71ca0840bbeb6b7d58c64ac33164aa87057ba93e10764496e296
+  InstallerSha256: fb28c6a13538978b2367e88a0aeb4377d55769dd24a7a00f5394d6828e579afb
 ManifestType: installer
 ManifestVersion: 1.10.0
