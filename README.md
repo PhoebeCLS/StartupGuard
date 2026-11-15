@@ -72,7 +72,7 @@
 前往 **[GitHub Releases](https://github.com/PhoebeCLS/StartupGuard/releases)** 根据设备架构（`x64` / `arm64`）与部署方式下载对应包（已取消 MSIX 发行，统一提供无限制且支持彻底卸载的原生版本）：
 
 1. **安装版（推荐）**：`StartupGuard-X.Y.Z-<arch>-<self-contained|framework-dependent>-Setup.exe`
-   - 自动安装程序组件、注册 `LocalSystem` 后台守护服务与托盘开机自启、支持快捷方式；卸载时默认保留个人规则库与日志，也可在卸载向导勾选“同时删除全部个人数据”以零残留清理程序、服务、注册表、`%LocalAppData%`、`%AppData%` 及 `C:\ProgramData\StartupGuard` 文件夹。
+   - 自动安装程序组件、注册 `LocalSystem` 后台守护服务与托盘开机自启、支持快捷方式；卸载时默认勾选“同时删除全部个人数据”以零残留清理程序、服务、注册表、`%LocalAppData%`、`%AppData%` 及 `C:\ProgramData\StartupGuard` 文件夹（如需重装后保留规则与日志，可在卸载向导取消勾选）。
 2. **绿色便携压缩包**：`StartupGuard-X.Y.Z-<arch>-<self-contained|framework-dependent>-portable.zip`
    - 解压至任意目录运行 `StartupGuard.App.exe` 即可使用，并在界面中按需注册或切换后台守护服务状态。
 3. **部署变体选择建议**：

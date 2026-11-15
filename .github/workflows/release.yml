@@ -257,7 +257,7 @@ jobs:
           [void]$sb.AppendLine()
           [void]$sb.AppendLine("## 📥 下载版本说明（Windows 10/11 x64 & ARM64）")
           [void]$sb.AppendLine()
-          [void]$sb.AppendLine("> 注：因内核 ETW 监控仅支持 64 位系统（不支持 32 位 x86），提供 $($bt)x64$($bt) 与 $($bt)arm64$($bt) 架构的 **独立自包含（$($bt)self-contained$($bt)）** 与 **依赖框架（$($bt)framework-dependent$($bt)，需安装 [.NET 10 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/10.0)）** 两种安装版 / 便携包。安装版卸载时支持勾选彻底清除全部个人数据及 $($bt)C:\ProgramData\StartupGuard$($bt) 文件夹（默认不勾选以保留个人规则）。")
+          [void]$sb.AppendLine("> 注：因内核 ETW 监控仅支持 64 位系统（不支持 32 位 x86），提供 $($bt)x64$($bt) 与 $($bt)arm64$($bt) 架构的 **独立自包含（$($bt)self-contained$($bt)）** 与 **依赖框架（$($bt)framework-dependent$($bt)，需安装 [.NET 10 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/10.0)）** 两种安装版 / 便携包。安装版卸载时默认勾选彻底清除个人数据及 $($bt)C:\ProgramData\StartupGuard$($bt) 文件夹（可按需取消勾选以保留个人规则）。")
           [void]$sb.AppendLine()
           [void]$sb.AppendLine("| 类型 | $($bt)self-contained$($bt)（免装运行库，推荐） | $($bt)framework-dependent$($bt)（体积小，需 .NET 10 桌面运行时） |")
           [void]$sb.AppendLine("| :--- | :--- | :--- |")

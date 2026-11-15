@@ -37,7 +37,7 @@ InstallDir "$PROGRAMFILES64\StartupGuard"
 InstallDirRegKey HKLM "${PRODUCT_DIR_REGKEY}" "InstallDir"
 RequestExecutionLevel admin
 
-; 卸载页面状态变量（默认不勾选：仅卸载程序本体，保留个人规则、日志与配置）
+; 卸载页面状态变量（默认勾选：卸载时同步彻底删除个人规则、日志、配置与共享数据）
 Var UninstDeleteDataDialog
 Var UninstDeleteDataCheckbox
 Var UninstDeleteUserData
@@ -68,28 +68,28 @@ UninstPage custom un.DeleteDataPageCreate un.DeleteDataPageLeave
 !insertmacro MUI_LANGUAGE "SimpChinese"
 
 ; =========================================================================
-; 卸载自定义页：询问是否同时删除个人数据（默认不勾选）
+; 卸载自定义页：询问是否同时删除个人数据（默认勾选）
 ; =========================================================================
 Function un.onInit
-    StrCpy $UninstDeleteUserData "0"
+    StrCpy $UninstDeleteUserData "1"
 FunctionEnd
 
 Function un.DeleteDataPageCreate
-    !insertmacro MUI_HEADER_TEXT "个人数据清理选项" "选择是否在卸载程序的同时删除个人规则、日志与全部本地数据"
+    !insertmacro MUI_HEADER_TEXT "个人数据清理选项" "选择是否在卸载时清理本地个人数据"
     nsDialogs::Create 1018
     Pop $UninstDeleteDataDialog
     ${If} $UninstDeleteDataDialog == error
         Abort
     ${EndIf}
 
-    ${NSD_CreateLabel} 0 0 100% 30u "卸载程序将移除 StartupGuard 主程序、后台守护服务、开机自启项与快捷方式。默认不勾选下方选项，保留您的个人规则与拦截日志以便后续重装或升级继续使用。"
+    ${NSD_CreateLabel} 0 0 100% 22u "卸载程序将移除 StartupGuard 主程序、后台守护服务、开机自启项与快捷方式。"
     Pop $0
 
-    ${NSD_CreateCheckbox} 0 38u 100% 24u "同时删除全部个人数据（彻底清除规则库、拦截日志、配置及 C:\ProgramData\StartupGuard 文件夹）"
+    ${NSD_CreateCheckbox} 0 28u 100% 18u "同时删除全部个人数据"
     Pop $UninstDeleteDataCheckbox
-    ${NSD_SetState} $UninstDeleteDataCheckbox ${BST_UNCHECKED}
+    ${NSD_SetState} $UninstDeleteDataCheckbox ${BST_CHECKED}
 
-    ${NSD_CreateLabel} 0 70u 100% 36u "提示：勾选后将连同 C:\ProgramData\StartupGuard 及其内部所有文件、%LocalAppData%\StartupGuard、%AppData%\StartupGuard 与用户配置注册表一并彻底移除，不留任何残留（不会还原您已优化的系统自启与右键菜单状态）。"
+    ${NSD_CreateLabel} 0 54u 100% 28u "提示：勾选后将一并清空本地规则库、日志与配置；不会还原您已优化的系统自启与右键菜单状态。"
     Pop $0
 
     nsDialogs::Show

@@ -2168,15 +2168,16 @@ public class Feedback12BatchTests
         string releaseYml = File.ReadAllText(Path.Combine(repoRoot, ".github", "workflows", "release.yml"));
         string readme = File.ReadAllText(Path.Combine(repoRoot, "README.md"));
 
-        // 1. 卸载可选清理个人数据（默认不勾选；勾选时连同 ProgramData\StartupGuard 文件夹彻底移除）
+        // 1. 卸载可选清理个人数据（默认勾选，文案简洁；勾选时连同 ProgramData\StartupGuard 文件夹彻底移除）
         Assert.Contains("!include \"nsDialogs.nsh\"", nsi);
-        Assert.Contains("StrCpy $UninstDeleteUserData \"0\"", nsi);
-        Assert.Contains("${NSD_SetState} $UninstDeleteDataCheckbox ${BST_UNCHECKED}", nsi);
-        Assert.Contains("同时删除全部个人数据", nsi);
-        Assert.Contains("C:\\ProgramData\\StartupGuard", nsi);
+        Assert.Contains("StrCpy $UninstDeleteUserData \"1\"", nsi);
+        Assert.Contains("${NSD_SetState} $UninstDeleteDataCheckbox ${BST_CHECKED}", nsi);
+        Assert.Contains("\"同时删除全部个人数据\"", nsi);
+        Assert.Contains("不会还原您已优化的系统自启与右键菜单状态", nsi);
         Assert.Contains("DeleteRegValue HKCU \"Software\\Microsoft\\Windows\\CurrentVersion\\Run\" \"StartupGuardTray\"", nsi);
         Assert.Contains("StartupApproved\\Run32", nsi);
         Assert.Contains("ExpandEnvStrings $1 \"%ProgramData%\"", nsi);
+        Assert.Contains("rmdir /s /q \"$1\\StartupGuard\"", nsi);
 
         int uninstStart = nsi.IndexOf("Section \"Uninstall\"", StringComparison.Ordinal);
         Assert.True(uninstStart > 0);
