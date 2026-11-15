@@ -111,7 +111,7 @@ Name: "{autoprograms}\{#MyAppName}\卸载 {#MyAppName}"; Filename: "{uninstallex
 ; 清理旧版 32 位托盘自启残留并写入 64 位 HKLM Run
 Root: HKLM32; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: none; ValueName: "StartupGuardTray"; Flags: deletevalue
 Root: HKLM; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "StartupGuardTray"; ValueData: """{app}\{#MyTrayExeName}"""; Flags: uninsdeletevalue
-Root: HKLM; Subkey: "Software\{#MyAppName}"; ValueType: string; ValueName: "InstallDir"; ValueData: "{app}"; Flags: uninsdeletekey
+Root: HKLM; Subkey: "Software\{#MyAppName}"; ValueType: string; ValueName: "InstallDir"; ValueData: "{app}"; Flags: uninsdeletevalue uninsdeletekeyifempty
 
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "立即启动 StartupGuard"; Flags: nowait postinstall skipifsilent runasoriginaluser
@@ -135,16 +135,19 @@ end;
 
 procedure StopRunningProcessesAndService(SleepAfterMs: Integer);
 var
-  ScExe, KillExe: string;
+  ScExe, KillExe, LogmanExe: string;
 begin
   ScExe := ExpandConstant('{sys}\sc.exe');
   KillExe := ExpandConstant('{sys}\taskkill.exe');
+  LogmanExe := ExpandConstant('{sys}\logman.exe');
 
   RunHidden(ScExe, 'stop {#MyServiceName}');
+  Sleep(500);
   RunHidden(KillExe, '/F /T /IM {#MyTrayExeName}');
   RunHidden(KillExe, '/F /T /IM {#MyAppExeName}');
   RunHidden(KillExe, '/F /T /IM {#MyProbeExeName}');
   RunHidden(KillExe, '/F /T /IM {#MyServiceExeName}');
+  RunHidden(LogmanExe, 'stop StartupGuard_KernelRegistry_Trace -ets');
   if SleepAfterMs > 0 then
     Sleep(SleepAfterMs);
 end;
@@ -479,6 +482,19 @@ begin
   end;
 end;
 
+procedure CleanTempFallbackFiles(const TempDir: string);
+var
+  BaseDir: string;
+begin
+  if TempDir = '' then
+    Exit;
+  BaseDir := AddBackslash(TempDir);
+  DeleteFile(BaseDir + 'startupguard_rules.db');
+  DeleteFile(BaseDir + 'startupguard_rules.db-wal');
+  DeleteFile(BaseDir + 'startupguard_rules.db-shm');
+  DeleteFile(BaseDir + 'startupguard_rules.bin');
+end;
+
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 var
   ServiceExe, AppDir, ScExe: string;
@@ -500,11 +516,16 @@ begin
         ScExe := ExpandConstant('{sys}\sc.exe');
         RunHidden(ScExe, 'delete {#MyServiceName}');
         CleanAllAutoStartRegistryKeys;
+        RegDeleteKeyIncludingSubkeys(HKLM64, 'SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\StartupGuard');
+        RegDeleteKeyIncludingSubkeys(HKLM32, 'SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\StartupGuard');
       end;
 
     usPostUninstall:
       begin
         CleanAllShortcuts;
+        CleanTempFallbackFiles(GetEnv('TEMP'));
+        CleanTempFallbackFiles(GetEnv('TMP'));
+        CleanTempFallbackFiles(ExpandConstant('{localappdata}\Temp'));
         AppDir := ExpandConstant('{app}');
         CleanWildcardFiles(AppDir, '*.*');
         DelTree(AppDir, True, True, True);

@@ -8,7 +8,7 @@ param(
     [string]$Arm64Sha256 = "",
     [string]$OutputDirectory = "",
     [string]$RepoSlug = "PhoebeCLS/StartupGuard",
-    [string]$ManifestVersion = "1.12.0"
+    [string]$ManifestVersion = "1.10.0"
 )
 
 Set-StrictMode -Version Latest
@@ -18,9 +18,13 @@ $cleanVer = $Version.TrimStart('v').Trim()
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 if ([string]::IsNullOrWhiteSpace($DistDir)) {
     $DistDir = Join-Path $repoRoot "dist"
+} else {
+    $DistDir = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($DistDir)
 }
 if ([string]::IsNullOrWhiteSpace($OutputDirectory)) {
     $OutputDirectory = Join-Path $repoRoot "packaging\winget\manifests\p\PhoebeCLS\StartupGuard\$cleanVer"
+} else {
+    $OutputDirectory = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($OutputDirectory)
 }
 
 $x64ExeName = "StartupGuard-$cleanVer-x64-self-contained-Setup.exe"

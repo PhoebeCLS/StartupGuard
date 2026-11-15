@@ -133,8 +133,10 @@ jobs:
           $wingetDir = "packaging/winget/manifests/p/PhoebeCLS/StartupGuard/${{ env.APP_VERSION }}"
           ./scripts/New-WingetManifest.ps1 -Version "${{ env.APP_VERSION }}" -DistDir "dist" -OutputDirectory $wingetDir | Out-Null
           if (Get-Command winget.exe -ErrorAction SilentlyContinue) {
-            winget validate --manifest $wingetDir
-            if ($LASTEXITCODE -ne 0) { throw "winget validate failed with code $LASTEXITCODE" }
+            winget validate --manifest $wingetDir --disable-interactivity
+            if ($LASTEXITCODE -ne 0 -and $LASTEXITCODE -ne -1978335192) {
+              throw "winget validate failed with code $LASTEXITCODE"
+            }
           }
 
       - name: Configure SSH Commit & Tag Signing Key (Ephemeral)

@@ -1,5 +1,5 @@
 # Created with StartupGuard WinGet manifest generator
-# yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.12.0.schema.json
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.10.0.schema.json
 
 PackageIdentifier: PhoebeCLS.StartupGuard
 PackageVersion: 1.0.2
@@ -25,9 +25,9 @@ AppsAndFeaturesEntries:
 Installers:
 - Architecture: x64
   InstallerUrl: https://github.com/PhoebeCLS/StartupGuard/releases/download/v1.0.2/StartupGuard-1.0.2-x64-self-contained-Setup.exe
-  InstallerSha256: 86f8d5280120440f0e5877177b9e34e26931e8b0adc6dbc7fce3a328f49d6fe7
+  InstallerSha256: bd228ff2063930443a9e530bbfd998812a06502b85c8cc8a50389ec2dfa12322
 - Architecture: arm64
   InstallerUrl: https://github.com/PhoebeCLS/StartupGuard/releases/download/v1.0.2/StartupGuard-1.0.2-arm64-self-contained-Setup.exe
-  InstallerSha256: 38fb7e19c94f62608638477b0cc623140cb93c635b37ba76b22d6e5d09d05da2
+  InstallerSha256: 382108c34afc71ca0840bbeb6b7d58c64ac33164aa87057ba93e10764496e296
 ManifestType: installer
-ManifestVersion: 1.12.0
+ManifestVersion: 1.10.0

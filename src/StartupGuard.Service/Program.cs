@@ -157,6 +157,24 @@ public static class Program
                         if (!sid.StartsWith("S-1-5-21-", StringComparison.OrdinalIgnoreCase) || sid.EndsWith("_Classes", StringComparison.OrdinalIgnoreCase))
                             continue;
                         try { Microsoft.Win32.Registry.Users.DeleteSubKeyTree($@"{sid}\Software\StartupGuard", throwOnMissingSubKey: false); } catch { }
+                        try
+                        {
+                            using var runKey = Microsoft.Win32.Registry.Users.OpenSubKey($@"{sid}\Software\Microsoft\Windows\CurrentVersion\Run", writable: true);
+                            runKey?.DeleteValue("StartupGuardTray", throwOnMissingValue: false);
+                        }
+                        catch { }
+                        try
+                        {
+                            using var approvedKey = Microsoft.Win32.Registry.Users.OpenSubKey($@"{sid}\Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run", writable: true);
+                            approvedKey?.DeleteValue("StartupGuardTray", throwOnMissingValue: false);
+                        }
+                        catch { }
+                        try
+                        {
+                            using var approved32Key = Microsoft.Win32.Registry.Users.OpenSubKey($@"{sid}\Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run32", writable: true);
+                            approved32Key?.DeleteValue("StartupGuardTray", throwOnMissingValue: false);
+                        }
+                        catch { }
                     }
                 }
                 catch { }
