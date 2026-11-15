@@ -49,11 +49,36 @@ jobs:
         run: |
           dotnet test tests/StartupGuard.Tests/StartupGuard.Tests.csproj -c Release -p:Platform=x64 --nologo
 
-      - name: Ensure NSIS is available
+      - name: Ensure Inno Setup 6.4+ is available
         shell: pwsh
         run: |
-          if (-not (Test-Path "C:\Program Files (x86)\NSIS\makensis.exe") -and -not (Get-Command makensis.exe -ErrorAction SilentlyContinue)) {
-            choco install nsis -y --no-progress
+          $isccCandidates = @(
+            "C:\Program Files (x86)\Inno Setup 6\ISCC.exe",
+            "C:\Program Files\Inno Setup 6\ISCC.exe"
+          )
+          $iscc = $isccCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+          $needsInstall = $true
+          if ($iscc) {
+            $ver = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($iscc).ProductVersion
+            Write-Host "Found preinstalled Inno Setup version: $ver"
+            $parsedVer = $null
+            if ([version]::TryParse(($ver -replace '[^0-9.].*$', ''), [ref]$parsedVer) -and $parsedVer -ge [version]'6.4.0') {
+              $needsInstall = $false
+            }
+          }
+          if ($needsInstall) {
+            $innoUrl = "https://github.com/jrsoftware/issrc/releases/download/is-6_7_3/innosetup-6.7.3.exe"
+            $expectedSha = "9c73c3bae7ed48d44112a0f48e66742c00090bdb5bef71d9d3c056c66e97b732"
+            $innoSetup = Join-Path $env:RUNNER_TEMP "innosetup-6.7.3.exe"
+            Invoke-WebRequest -Uri $innoUrl -OutFile $innoSetup
+            $actualSha = (Get-FileHash $innoSetup -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($actualSha -ne $expectedSha) {
+              throw "Inno Setup SHA256 mismatch: $actualSha"
+            }
+            $proc = Start-Process -FilePath $innoSetup -ArgumentList "/VERYSILENT","/SUPPRESSMSGBOXES","/NORESTART" -Wait -PassThru
+            if ($proc.ExitCode -ne 0) {
+              throw "Inno Setup installer exited with $($proc.ExitCode)"
+            }
           }
 
       - name: Determine release version & generate changelog
@@ -100,11 +125,17 @@ jobs:
 
           Write-Host "Resolved release version: $newTag (previous: $latestTag)"
 
-      - name: Build release artifacts & capture automated screenshots
+      - name: Build release artifacts, WinGet manifests & capture screenshots
         shell: pwsh
         run: |
           ./scripts/build_release.ps1 -Version "${{ env.APP_VERSION }}"
           ./scripts/capture_screenshots.ps1 -AppExe "artifacts/publish/win-x64-self-contained/StartupGuard.App.exe" -AssetsDir "assets"
+          $wingetDir = "packaging/winget/manifests/p/PhoebeCLS/StartupGuard/${{ env.APP_VERSION }}"
+          ./scripts/New-WingetManifest.ps1 -Version "${{ env.APP_VERSION }}" -DistDir "dist" -OutputDirectory $wingetDir | Out-Null
+          if (Get-Command winget.exe -ErrorAction SilentlyContinue) {
+            winget validate --manifest $wingetDir
+            if ($LASTEXITCODE -ne 0) { throw "winget validate failed with code $LASTEXITCODE" }
+          }
 
       - name: Configure SSH Commit & Tag Signing Key (Ephemeral)
         shell: pwsh
@@ -133,17 +164,17 @@ jobs:
           git config commit.gpgsign true
           git config tag.gpgsign true
 
-      - name: Commit updated screenshots (SSH Verified) if changed
+      - name: Commit updated screenshots & WinGet manifests (SSH Verified) if changed
         shell: pwsh
         run: |
-          git add assets/*.jpg
-          $changed = git status --porcelain assets/
+          git add assets/*.jpg packaging/winget/
+          $changed = git status --porcelain assets/ packaging/winget/
           if ($changed) {
-            git commit -S -m "chore(assets): update automated UI screenshots for ${{ env.RELEASE_TAG }} [skip ci]"
+            git commit -S -m "chore(release): update screenshots and winget manifests for ${{ env.RELEASE_TAG }} [skip ci]"
             git push origin HEAD:main
           }
           else {
-            Write-Host "UI screenshots unchanged, keeping signed HEAD commit."
+            Write-Host "UI screenshots and WinGet manifests unchanged, keeping signed HEAD commit."
           }
 
       - name: Create SSH-Signed Tag and Auto Changelog Release
@@ -219,18 +250,10 @@ jobs:
           }
 
           $sb = [System.Text.StringBuilder]::new()
-          [void]$sb.AppendLine("## 🚀 StartupGuard $tag 更新日志")
+          [void]$sb.AppendLine("## StartupGuard $tag 更新日志")
           [void]$sb.AppendLine()
 
           $isInitialRelease = [string]::IsNullOrWhiteSpace($prev)
-          if ($isInitialRelease) {
-            [void]$sb.AppendLine("> 🎉 **StartupGuard $tag 首个正式开源版本发布！** 初始规则库完全为空，不含任何内置预置规则。")
-            [void]$sb.AppendLine()
-          }
-          else {
-            [void]$sb.AppendLine("> 💡 发行版本初始规则库完全为空（不含任何内置规则），所有拦截/放行策略均由用户自主审核决定。")
-            [void]$sb.AppendLine()
-          }
 
           if (-not $isInitialRelease -and $featList.Count -gt 0) {
             [void]$sb.AppendLine("### ✨ 新增特性")
@@ -257,7 +280,7 @@ jobs:
           [void]$sb.AppendLine()
           [void]$sb.AppendLine("## 📥 下载版本说明（Windows 10/11 x64 & ARM64）")
           [void]$sb.AppendLine()
-          [void]$sb.AppendLine("> 注：因内核 ETW 监控仅支持 64 位系统（不支持 32 位 x86），提供 $($bt)x64$($bt) 与 $($bt)arm64$($bt) 架构的 **独立自包含（$($bt)self-contained$($bt)）** 与 **依赖框架（$($bt)framework-dependent$($bt)，需安装 [.NET 10 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/10.0)）** 两种安装版 / 便携包。安装版卸载时默认勾选彻底清除个人数据及 $($bt)C:\ProgramData\StartupGuard$($bt) 文件夹（可按需取消勾选以保留个人规则）。")
+          [void]$sb.AppendLine("> 仅提供 Windows 10/11 64 位（`x64` / `arm64`）版本（ETW 内核会话不兼容 32 位 x86）。`framework-dependent` 安装版支持自动检测并安装 [.NET 10 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/10.0)；安装版默认在卸载时清除全部个人数据及 `C:\ProgramData\StartupGuard` 目录，可在卸载确认框取消勾选保留规则与日志。WinGet 包清单位于仓库 `packaging/winget/manifests/p/PhoebeCLS/StartupGuard/$ver`。")
           [void]$sb.AppendLine()
           [void]$sb.AppendLine("| 类型 | $($bt)self-contained$($bt)（免装运行库，推荐） | $($bt)framework-dependent$($bt)（体积小，需 .NET 10 桌面运行时） |")
           [void]$sb.AppendLine("| :--- | :--- | :--- |")

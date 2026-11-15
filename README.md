@@ -71,11 +71,12 @@
 
 前往 **[GitHub Releases](https://github.com/PhoebeCLS/StartupGuard/releases)** 根据设备架构（`x64` / `arm64`）与部署方式下载对应包（已取消 MSIX 发行，统一提供无限制且支持彻底卸载的原生版本）：
 
-1. **安装版（推荐）**：`StartupGuard-X.Y.Z-<arch>-<self-contained|framework-dependent>-Setup.exe`
-   - 自动安装程序组件、注册 `LocalSystem` 后台守护服务与托盘开机自启、支持快捷方式；卸载时默认勾选“同时删除全部个人数据”以零残留清理程序、服务、注册表、`%LocalAppData%`、`%AppData%` 及 `C:\ProgramData\StartupGuard` 文件夹（如需重装后保留规则与日志，可在卸载向导取消勾选）。
+1. **安装版（Inno Setup 6.4+，推荐）**：`StartupGuard-X.Y.Z-<arch>-<self-contained|framework-dependent>-Setup.exe`
+   - 自动安装主程序、配置 `LocalSystem` 后台守护服务与托盘开机自启、创建桌面与开始菜单快捷方式；支持跟随系统深浅主题切换，`framework-dependent` 版本检测到缺少 `.NET 10 Desktop Runtime` 时自动下载安装。卸载时默认勾选清理个人数据及 `C:\ProgramData\StartupGuard` 目录（可按需取消保留规则与日志）。
 2. **绿色便携压缩包**：`StartupGuard-X.Y.Z-<arch>-<self-contained|framework-dependent>-portable.zip`
    - 解压至任意目录运行 `StartupGuard.App.exe` 即可使用，并在界面中按需注册或切换后台守护服务状态。
-3. **部署变体选择建议**：
+3. **WinGet 包清单**：位于 `packaging/winget/manifests/p/PhoebeCLS/StartupGuard/`，支持本地 `winget install --manifest ...` 或提交至 `winget-pkgs`。
+4. **部署变体选择建议**：
    - `self-contained`（独立自包含）：内置 .NET 10 运行时，开箱即用。
    - `framework-dependent`（依赖框架）：安装包体积更小，需系统已安装 [.NET 10 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/10.0)。
 
@@ -91,11 +92,15 @@
 # 1. 运行全量 235+ 单元测试与回归测试
 dotnet test tests/StartupGuard.Tests/StartupGuard.Tests.csproj -c Release -p:Platform=x64
 
-# 2. 发布全部 8 个安装包与绿色便携压缩包（需 NSIS makensis.exe）
-./scripts/build_release.ps1 -Version "1.0.1"
+# 2. 发布全部 8 个 Inno Setup 6.4+ 安装包与便携压缩包（需 ISCC.exe）
+./scripts/build_release.ps1 -Version "1.0.2"
 
 # 3. 仅生成深浅双模界面预览截图
 ./scripts/capture_screenshots.ps1
+
+# 4. 为已构建的 dist/ 产物生成 WinGet 清单并校验
+$manifestDir = @(& ./scripts/New-WingetManifest.ps1 -Version "1.0.2")[-1]
+winget validate --manifest "$manifestDir"
 ```
 
 ---
