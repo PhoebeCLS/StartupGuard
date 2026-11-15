@@ -1175,7 +1175,7 @@ public class Feedback12BatchTests
         string repoRoot = FindRepoRoot();
         string mainCs = File.ReadAllText(Path.Combine(repoRoot, "src", "StartupGuard.App", "MainWindow.xaml.cs"));
         string mainXaml = File.ReadAllText(Path.Combine(repoRoot, "src", "StartupGuard.App", "MainWindow.xaml"));
-        string nsi = File.ReadAllText(Path.Combine(repoRoot, "installer", "StartupGuard.nsi"));
+        string iss = File.ReadAllText(Path.Combine(repoRoot, "installer", "StartupGuard.iss"));
 
         // 1. 跟随系统主题实时监听广播 + 标题栏与搜索框点击穿透
         Assert.Contains("UserPreferenceChanged +=", mainCs);
@@ -1193,10 +1193,10 @@ public class Feedback12BatchTests
         Assert.DoesNotContain("minimumOverlayMs: 380", mainCs);
         Assert.Contains("_queuedShowOverlay", mainCs);
 
-        // 4. NSIS 卸载先退出目录锁并清理根目录
-        Assert.Contains("SetOutPath \"$TEMP\"", nsi);
-        Assert.Contains("RMDir /REBOOTOK \"$INSTDIR\"", nsi);
-        Assert.Contains("rmdir /s /q \"$INSTDIR\"", nsi);
+        // 4. Inno Setup 卸载先切出目录锁并清理根目录
+        Assert.Contains("SetCurrentDir(ExpandConstant('{tmp}'))", iss);
+        Assert.Contains("DelTree(AppDir, True, True, True)", iss);
+        Assert.Contains("rmdir /s /q \"' + AppDir + '\"'", iss);
 
         // 5. 注释洁净检查
         Assert.DoesNotContain("铁律", mainCs);
@@ -1323,7 +1323,7 @@ public class Feedback12BatchTests
         string repoRoot = FindRepoRoot();
         string mainCs = File.ReadAllText(Path.Combine(repoRoot, "src", "StartupGuard.App", "MainWindow.xaml.cs"));
         string mainXaml = File.ReadAllText(Path.Combine(repoRoot, "src", "StartupGuard.App", "MainWindow.xaml"));
-        string nsi = File.ReadAllText(Path.Combine(repoRoot, "installer", "StartupGuard.nsi"));
+        string iss = File.ReadAllText(Path.Combine(repoRoot, "installer", "StartupGuard.iss"));
 
         Assert.DoesNotContain("TxtGlobalSearch_GotFocus", mainXaml);
         Assert.DoesNotContain("TxtGlobalSearch_GotFocus", mainCs);
@@ -1335,7 +1335,7 @@ public class Feedback12BatchTests
         Assert.DoesNotContain("Content=\"全部右键\"", mainXaml);
         Assert.DoesNotContain("分类筛选（勾选左侧大类可一键全选或取消该类）", mainXaml);
 
-        Assert.Contains("sc.exe stop StartupGuardService", nsi);
+        Assert.Contains("stop {#MyServiceName}", iss);
     }
 
     [Fact]
@@ -2163,43 +2163,128 @@ public class Feedback12BatchTests
     public void InstallerAndMultiArchPackagingContractsHold()
     {
         string repoRoot = FindRepoRoot();
-        string nsi = File.ReadAllText(Path.Combine(repoRoot, "installer", "StartupGuard.nsi"));
+        string iss = File.ReadAllText(Path.Combine(repoRoot, "installer", "StartupGuard.iss"));
         string buildScript = File.ReadAllText(Path.Combine(repoRoot, "scripts", "build_release.ps1"));
+        string wingetScript = File.ReadAllText(Path.Combine(repoRoot, "scripts", "New-WingetManifest.ps1"));
         string releaseYml = File.ReadAllText(Path.Combine(repoRoot, ".github", "workflows", "release.yml"));
         string readme = File.ReadAllText(Path.Combine(repoRoot, "README.md"));
 
-        // 1. 卸载可选清理个人数据（默认勾选，文案简洁；勾选时连同 ProgramData\StartupGuard 文件夹彻底移除）
-        Assert.Contains("!include \"nsDialogs.nsh\"", nsi);
-        Assert.Contains("StrCpy $UninstDeleteUserData \"1\"", nsi);
-        Assert.Contains("${NSD_SetState} $UninstDeleteDataCheckbox ${BST_CHECKED}", nsi);
-        Assert.Contains("\"同时删除全部个人数据\"", nsi);
-        Assert.Contains("不会还原您已优化的系统自启与右键菜单状态", nsi);
-        Assert.Contains("DeleteRegValue HKCU \"Software\\Microsoft\\Windows\\CurrentVersion\\Run\" \"StartupGuardTray\"", nsi);
-        Assert.Contains("StartupApproved\\Run32", nsi);
-        Assert.Contains("ExpandEnvStrings $1 \"%ProgramData%\"", nsi);
-        Assert.Contains("rmdir /s /q \"$1\\StartupGuard\"", nsi);
+        // 1. 迁移至 Inno Setup 6.4+（WizardStyle=modern dynamic）与卸载可选清理个人数据（默认勾选、简洁表述、彻底移除 ProgramData\StartupGuard）
+        Assert.False(File.Exists(Path.Combine(repoRoot, "installer", "StartupGuard.nsi")));
+        Assert.True(File.Exists(Path.Combine(repoRoot, "installer", "Languages", "ChineseSimplified.isl")));
+        Assert.Contains("WizardStyle=modern dynamic", iss);
+        Assert.Contains("EnsureDotNet10DesktopRuntime", iss);
+        Assert.Contains("UninstDeleteUserData := Lowercase(ExpandConstant('{param:DELETEUSERDATA|1}')) <> '0';", iss);
+        Assert.Contains("'同时删除全部个人数据'", iss);
+        Assert.Contains("不会还原您已优化的系统自启与右键菜单状态", iss);
+        Assert.Contains("HKCU64, 'Software\\Microsoft\\Windows\\CurrentVersion\\Run'", iss);
+        Assert.Contains("StartupApproved\\Run32", iss);
+        Assert.Contains("{commonappdata}\\{#MyAppName}", iss);
+        Assert.Contains("RemoveDirectoryCompletely(ExpandConstant('{commonappdata}\\{#MyAppName}'))", iss);
 
-        int uninstStart = nsi.IndexOf("Section \"Uninstall\"", StringComparison.Ordinal);
+        int uninstStart = iss.IndexOf("usUninstall:", StringComparison.Ordinal);
         Assert.True(uninstStart > 0);
-        string uninstallSection = nsi[uninstStart..];
+        string uninstallSection = iss[uninstStart..];
         int resetCallIdx = uninstallSection.IndexOf("--uninstall-reset", StringComparison.Ordinal);
-        int delServiceExeIdx = uninstallSection.IndexOf("Delete \"$INSTDIR\\StartupGuard.Service.exe\"", StringComparison.Ordinal);
-        Assert.True(resetCallIdx > 0 && delServiceExeIdx > resetCallIdx);
+        int deleteServiceIdx = uninstallSection.IndexOf("'delete {#MyServiceName}'", StringComparison.Ordinal);
+        Assert.True(resetCallIdx > 0 && deleteServiceIdx > resetCallIdx);
 
-        // 2. 取消 MSIX 发行，统一构建 x64 / arm64 的 self-contained 与 framework-dependent 8 个发行产物
+        // 2. WinGet 清单生成脚本与 CI 发行配置检查（无 MSIX，保留 x64 / arm64 8 个产物）
         Assert.False(File.Exists(Path.Combine(repoRoot, "installer", "AppxManifest.xml")));
+        Assert.Contains("ISCC.exe", buildScript);
         Assert.DoesNotContain(".msix", buildScript, StringComparison.OrdinalIgnoreCase);
-        Assert.DoesNotContain(".cer", buildScript, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("@(\"x64\", \"arm64\")", buildScript);
         Assert.Contains("@(\"self-contained\", \"framework-dependent\")", buildScript);
         Assert.Contains("-portable.zip", buildScript);
         Assert.Contains("-Setup.exe", buildScript);
 
+        Assert.Contains("InstallerType: inno", wingetScript);
+        Assert.Contains("PhoebeCLS.StartupGuard", wingetScript);
+
         Assert.DoesNotContain(".msix", releaseYml, StringComparison.OrdinalIgnoreCase);
-        Assert.DoesNotContain(".cer", releaseYml, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("发行版本初始规则库完全为空", releaseYml);
+        Assert.Contains("New-WingetManifest.ps1", releaseYml);
         Assert.Contains("| File | SHA256 |", releaseYml);
-        Assert.Contains("if (-not $isInitialRelease -and $featList.Count -gt 0)", releaseYml);
         Assert.DoesNotContain(".msix", readme, StringComparison.OrdinalIgnoreCase);
-        Assert.DoesNotContain(".cer", readme, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void PopupZeroSelectionClose_DismissWithoutChange_AndLogManualActions_ContractsHold()
+    {
+        // 1. InterceptionAction.DismissWithoutChange 为独立无变更动作，回滚引擎与驱动安全均不会触发删除或改写
+        Assert.Equal(6, (byte)InterceptionAction.DismissWithoutChange);
+        Assert.Equal("未处置（仅记录）", PrivilegedRollbackEngine.DescribeActionShortChinese(InterceptionAction.DismissWithoutChange));
+
+        string tempDir = Path.Combine(Path.GetTempPath(), $"sg_dismiss_{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempDir);
+        string dummySys = Path.Combine(tempDir, "sample.sys");
+        File.WriteAllBytes(dummySys, "MZ_SAMPLE"u8.ToArray());
+        try
+        {
+            var drvTarget = NativeSecurityExtractor.BuildTargetProgramFeatures(
+                MonitorCategory.KernelDriver,
+                dummySys,
+                dummySys);
+            bool ok = PrivilegedRollbackEngine.ExecuteRollback(drvTarget, InterceptionAction.DismissWithoutChange);
+            Assert.True(ok);
+            Assert.True(File.Exists(dummySys));
+        }
+        finally
+        {
+            try { Directory.Delete(tempDir, recursive: true); } catch { }
+        }
+
+        // 2. IPC 二进制序列化对 DismissWithoutChange 往返无损
+        var payload = new StartupGuard.Core.Ipc.UserDecisionPayload
+        {
+            CorrelationId = 987654321UL,
+            ChosenAction = InterceptionAction.DismissWithoutChange,
+            RememberRule = false,
+            ChosenRuleMode = RuleMatchMode.PermanentAdaptive,
+            Category = MonitorCategory.StartupItem,
+            TargetBinaryPath = @"C:\Demo\App.exe",
+            LocationKey = @"HKCU\Software\Microsoft\Windows\CurrentVersion\Run\Demo",
+            DisplayName = "Demo"
+        };
+        byte[] encoded = StartupGuard.Core.Ipc.BinaryPipeSerializer.SerializeDecision(payload);
+        var decoded = StartupGuard.Core.Ipc.BinaryPipeSerializer.DeserializeDecision(encoded);
+        Assert.Equal(InterceptionAction.DismissWithoutChange, decoded.ChosenAction);
+        Assert.False(decoded.RememberRule);
+        Assert.Equal(payload.LocationKey, decoded.LocationKey);
+
+        // 3. 审计日志模型：关闭弹窗未处置条目展示为待审核并允许“手动处置”按钮操作
+        var dismissedLog = new AuditLogRecord
+        {
+            Category = MonitorCategory.StartupItem,
+            TargetProgram = @"C:\Demo\App.exe",
+            TargetLocation = @"HKCU\Software\Microsoft\Windows\CurrentVersion\Run\Demo",
+            ActionTaken = "已关闭弹窗（未处置）",
+            DiagnosticText = "用户关闭弹窗或未勾选处置项，未修改系统或规则，可在日志中手动操作"
+        };
+        Assert.Equal("待审核", dismissedLog.DisplayActionText);
+        Assert.True(dismissedLog.IsPendingManualAction);
+        Assert.True(dismissedLog.CanUndo);
+        Assert.Equal("手动处置", dismissedLog.LogActionButtonText);
+
+        // 4. 源码契约：未勾选任何项目时“阻止”自动切为“关闭”；直接 X 关闭发送 DismissWithoutChange；主窗口允许手动处置
+        string repoRoot = FindRepoRoot();
+        string diffCs = File.ReadAllText(Path.Combine(repoRoot, "src", "StartupGuard.TrayHost", "InterceptionDiffDialogWindow.xaml.cs"));
+        string serviceCs = File.ReadAllText(Path.Combine(repoRoot, "src", "StartupGuard.Service", "Program.cs"));
+        string trayCs = File.ReadAllText(Path.Combine(repoRoot, "src", "StartupGuard.TrayHost", "Program.cs"));
+        string mainXaml = File.ReadAllText(Path.Combine(repoRoot, "src", "StartupGuard.App", "MainWindow.xaml"));
+        string mainCs = File.ReadAllText(Path.Combine(repoRoot, "src", "StartupGuard.App", "MainWindow.xaml.cs"));
+
+        Assert.Contains("ResolvePrimaryActionButtonText", diffCs);
+        Assert.Contains("return \"关闭\";", diffCs);
+        Assert.Contains("ControlAppearance.Secondary", diffCs);
+        Assert.Contains("BuildDismissDecisions", diffCs);
+        Assert.Contains("InterceptionAction.DismissWithoutChange", diffCs);
+        Assert.Contains("OnCapturedItemPropertyChanged", diffCs);
+
+        Assert.Contains("InterceptionAction.DismissWithoutChange", serviceCs);
+        Assert.Contains("已关闭弹窗（未处置）", serviceCs);
+        Assert.Contains("InterceptionAction.DismissWithoutChange", trayCs);
+        Assert.Contains("{Binding LogActionButtonText}", mainXaml);
+        Assert.Contains("isPendingManual", mainCs);
     }
 }

@@ -1571,7 +1571,12 @@ public partial class MainWindow : FluentWindow
     {
         string raw = $"{log.ActionTaken} {log.DisplayActionText}";
         bool isFailed = raw.Contains("失败", StringComparison.OrdinalIgnoreCase) || raw.Contains("异常", StringComparison.OrdinalIgnoreCase) || raw.Contains("未生效", StringComparison.OrdinalIgnoreCase) || raw.Contains("Fail", StringComparison.OrdinalIgnoreCase);
-        bool isPending = raw.Contains("待审", StringComparison.OrdinalIgnoreCase) || raw.Contains("暂存", StringComparison.OrdinalIgnoreCase) || raw.Contains("Pending", StringComparison.OrdinalIgnoreCase);
+        bool isPending = raw.Contains("待审", StringComparison.OrdinalIgnoreCase)
+            || raw.Contains("暂存", StringComparison.OrdinalIgnoreCase)
+            || raw.Contains("未处置", StringComparison.OrdinalIgnoreCase)
+            || raw.Contains("关闭", StringComparison.OrdinalIgnoreCase)
+            || raw.Contains("Dismiss", StringComparison.OrdinalIgnoreCase)
+            || raw.Contains("Pending", StringComparison.OrdinalIgnoreCase);
         bool isAllowed = raw.Contains("放行", StringComparison.OrdinalIgnoreCase) || raw.Contains("恢复", StringComparison.OrdinalIgnoreCase) || raw.Contains("Allow", StringComparison.OrdinalIgnoreCase) || raw.Contains("Revert", StringComparison.OrdinalIgnoreCase) || raw.Contains("Manual", StringComparison.OrdinalIgnoreCase);
         bool isBlocked = raw.Contains("阻止", StringComparison.OrdinalIgnoreCase) || raw.Contains("禁止", StringComparison.OrdinalIgnoreCase) || raw.Contains("禁用", StringComparison.OrdinalIgnoreCase) || raw.Contains("回滚", StringComparison.OrdinalIgnoreCase) || raw.Contains("删除", StringComparison.OrdinalIgnoreCase) || raw.Contains("移除", StringComparison.OrdinalIgnoreCase) || raw.Contains("屏蔽", StringComparison.OrdinalIgnoreCase) || raw.Contains("Block", StringComparison.OrdinalIgnoreCase) || raw.Contains("Rollback", StringComparison.OrdinalIgnoreCase) || raw.Contains("Delete", StringComparison.OrdinalIgnoreCase);
 
@@ -5524,6 +5529,11 @@ public partial class MainWindow : FluentWindow
             return;
 
         _currentRestoringLog = log;
+        bool isPendingManual = log.IsPendingManualAction;
+        TxtRestoreDialogTitle.Text = isPendingManual ? "手动处置项目" : "选择恢复方式";
+        TxtRestoreActionLabel.Text = isPendingManual ? "选择处置状态" : "恢复目标状态";
+        BtnConfirmRestore.Content = isPendingManual ? "确认执行" : "确认恢复";
+
         TxtRestoreTargetName.Text = string.IsNullOrWhiteSpace(log.TargetProgram) ? log.LocationKey : log.TargetProgram;
         TxtRestoreTargetCategory.Text = $"类别: {log.CategoryName}";
         TxtRestoreTargetLocation.Text = log.LocationKey;
@@ -5532,27 +5542,31 @@ public partial class MainWindow : FluentWindow
         switch (log.Category)
         {
             case MonitorCategory.Win32Service:
-                options.Add(new RestoreOptionItem { Title = "恢复为自动启动", SummaryText = "已恢复为自动启动", Action = InterceptionAction.Allow, StartType = 2, DelayedAuto = false });
-                options.Add(new RestoreOptionItem { Title = "恢复为自动(延迟启动)", SummaryText = "已恢复为延迟启动", Action = InterceptionAction.RollbackToDelayedAuto, StartType = 2, DelayedAuto = true });
-                options.Add(new RestoreOptionItem { Title = "改为手动按需启动", SummaryText = "已调整为手动启动", Action = InterceptionAction.RollbackToDemand, StartType = 3, DelayedAuto = false });
-                options.Add(new RestoreOptionItem { Title = "保持禁止状态", SummaryText = "已保持禁止", Action = InterceptionAction.RollbackToDisabled, StartType = 4, DelayedAuto = false });
+                options.Add(new RestoreOptionItem { Title = isPendingManual ? "设为禁止启动" : "保持禁止状态", SummaryText = "已设为禁止", Action = InterceptionAction.RollbackToDisabled, StartType = 4, DelayedAuto = false });
+                options.Add(new RestoreOptionItem { Title = "设为手动按需启动", SummaryText = "已调整为手动启动", Action = InterceptionAction.RollbackToDemand, StartType = 3, DelayedAuto = false });
+                options.Add(new RestoreOptionItem { Title = "设为自动(延迟启动)", SummaryText = "已恢复为延迟启动", Action = InterceptionAction.RollbackToDelayedAuto, StartType = 2, DelayedAuto = true });
+                options.Add(new RestoreOptionItem { Title = "设为自动启动", SummaryText = "已恢复为自动启动", Action = InterceptionAction.Allow, StartType = 2, DelayedAuto = false });
+                options.Add(new RestoreOptionItem { Title = "删除该服务项", SummaryText = "已删除服务项", Action = InterceptionAction.DeleteEntry, StartType = 4, DelayedAuto = false });
                 break;
 
             case MonitorCategory.KernelDriver:
                 options.Add(new RestoreOptionItem { Title = "恢复为手动按需加载 (Start=3)", SummaryText = "已恢复为手动启动", Action = InterceptionAction.RollbackToDemand, StartType = 3, DelayedAuto = false });
                 options.Add(new RestoreOptionItem { Title = "恢复为自动加载 (Start=2)", SummaryText = "已恢复为自动加载", Action = InterceptionAction.Allow, StartType = 2, DelayedAuto = false });
                 options.Add(new RestoreOptionItem { Title = "恢复为系统启动加载 (Start=1)", SummaryText = "已恢复为系统启动", Action = InterceptionAction.Allow, StartType = 1, DelayedAuto = false });
-                options.Add(new RestoreOptionItem { Title = "保持禁止状态 (Start=4)", SummaryText = "已保持禁止", Action = InterceptionAction.RollbackToDisabled, StartType = 4, DelayedAuto = false });
+                options.Add(new RestoreOptionItem { Title = isPendingManual ? "设为禁止加载 (Start=4)" : "保持禁止状态 (Start=4)", SummaryText = "已保持禁止", Action = InterceptionAction.RollbackToDisabled, StartType = 4, DelayedAuto = false });
                 break;
 
             default:
-                options.Add(new RestoreOptionItem { Title = "恢复为启用状态", SummaryText = "已恢复为启用", Action = InterceptionAction.Allow, StartType = 2, DelayedAuto = false });
-                options.Add(new RestoreOptionItem { Title = "保持禁止/屏蔽状态", SummaryText = "已保持禁止", Action = InterceptionAction.RollbackToDisabled, StartType = 4, DelayedAuto = false });
+                options.Add(new RestoreOptionItem { Title = isPendingManual ? "设为禁止 / 屏蔽状态" : "保持禁止/屏蔽状态", SummaryText = "已设为禁止", Action = InterceptionAction.RollbackToDisabled, StartType = 4, DelayedAuto = false });
+                options.Add(new RestoreOptionItem { Title = "设为启用状态（放行）", SummaryText = "已设为启用", Action = InterceptionAction.Allow, StartType = 2, DelayedAuto = false });
+                options.Add(new RestoreOptionItem { Title = "删除此项（移除注册表或任务）", SummaryText = "已删除移除", Action = InterceptionAction.DeleteEntry, StartType = 4, DelayedAuto = false });
                 break;
         }
 
         CmbRestoreActionOption.ItemsSource = options;
-        CmbRestoreActionOption.SelectedIndex = 0;
+        CmbRestoreActionOption.SelectedIndex = isPendingManual
+            ? 0
+            : (log.Category == MonitorCategory.Win32Service ? 3 : (log.Category == MonitorCategory.KernelDriver ? 0 : 1));
         DialogRestoreActionHost.Visibility = Visibility.Visible;
     }
 

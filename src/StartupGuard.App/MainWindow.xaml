@@ -1550,10 +1550,10 @@
                                                                 <TextBlock Text="{Binding DiagnosticText}" FontSize="11" Margin="0,2,0,0" Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
                                                             </StackPanel>
 
-                                                            <!-- 右侧: 时间与 [恢复状态] 按钮 -->
+                                                            <!-- 右侧: 时间与 [手动处置 / 恢复状态] 按钮 -->
                                                             <StackPanel Grid.Column="2" VerticalAlignment="Center" HorizontalAlignment="Right">
                                                                 <TextBlock Text="{Binding EventTime, StringFormat='HH:mm:ss'}" FontSize="11.5" Foreground="{DynamicResource TextFillColorTertiaryBrush}" HorizontalAlignment="Right" Margin="0,0,0,6"/>
-                                                                <ui:Button Content="恢复状态" Appearance="Primary" Icon="{ui:SymbolIcon ArrowUndo24}" Click="BtnUndoLog_Click" Tag="{Binding}" Visibility="{Binding CanUndo, Converter={StaticResource BooleanToVisibilityConverter}}"/>
+                                                                <ui:Button Content="{Binding LogActionButtonText}" Appearance="Primary" Icon="{ui:SymbolIcon ArrowUndo24}" Click="BtnUndoLog_Click" Tag="{Binding}" Visibility="{Binding CanUndo, Converter={StaticResource BooleanToVisibilityConverter}}"/>
                                                             </StackPanel>
                                                         </Grid>
                                                     </Border>
@@ -2874,7 +2874,7 @@
                     <DropShadowEffect BlurRadius="40" Direction="270" ShadowDepth="10" Opacity="0.35" Color="#000000"/>
                 </Border.Effect>
                 <StackPanel>
-                    <TextBlock Text="选择恢复方式" FontSize="19" FontWeight="SemiBold" Foreground="{DynamicResource TextFillColorPrimaryBrush}" Margin="0,0,0,14"/>
+                    <TextBlock x:Name="TxtRestoreDialogTitle" Text="选择恢复方式" FontSize="19" FontWeight="SemiBold" Foreground="{DynamicResource TextFillColorPrimaryBrush}" Margin="0,0,0,14"/>
 
                     <Border CornerRadius="6" Background="{DynamicResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" BorderThickness="1" Padding="12" Margin="0,0,0,16">
                         <StackPanel>
@@ -2884,7 +2884,7 @@
                         </StackPanel>
                     </Border>
 
-                    <TextBlock Text="恢复目标状态" FontSize="13" FontWeight="SemiBold" Foreground="{DynamicResource TextFillColorPrimaryBrush}" Margin="0,0,0,6"/>
+                    <TextBlock x:Name="TxtRestoreActionLabel" Text="恢复目标状态" FontSize="13" FontWeight="SemiBold" Foreground="{DynamicResource TextFillColorPrimaryBrush}" Margin="0,0,0,6"/>
                     <ComboBox x:Name="CmbRestoreActionOption" Margin="0,0,0,22" HorizontalAlignment="Stretch" DisplayMemberPath="Title"/>
 
                     <Grid>
@@ -2893,7 +2893,7 @@
                             <ColumnDefinition Width="12"/>
                             <ColumnDefinition Width="*"/>
                         </Grid.ColumnDefinitions>
-                        <ui:Button Grid.Column="0" Content="确认恢复" Appearance="Primary" Height="36" HorizontalAlignment="Stretch" Click="BtnConfirmRestore_Click"/>
+                        <ui:Button x:Name="BtnConfirmRestore" Grid.Column="0" Content="确认恢复" Appearance="Primary" Height="36" HorizontalAlignment="Stretch" Click="BtnConfirmRestore_Click"/>
                         <ui:Button Grid.Column="2" Content="取消" Appearance="Secondary" Height="36" HorizontalAlignment="Stretch" Click="BtnCancelRestore_Click"/>
                     </Grid>
                 </StackPanel>
