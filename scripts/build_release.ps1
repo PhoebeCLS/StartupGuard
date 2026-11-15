@@ -1,5 +1,5 @@
 param(
-    [string]$Version = "1.0.2",
+    [string]$Version = "1.0.3",
     [string]$DotnetCli = "dotnet",
     [string[]]$Archs = @("x64", "arm64"),
     [string[]]$DeployModes = @("self-contained", "framework-dependent"),

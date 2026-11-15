@@ -4,7 +4,7 @@
 ; =========================================================================
 
 #ifndef ProductVersion
-  #define ProductVersion "1.0.2"
+  #define ProductVersion "1.0.3"
 #endif
 #ifndef TargetArch
   #define TargetArch "x64"
@@ -53,7 +53,7 @@
 #endif
 
 [Setup]
-AppId={{{#MyAppId}}}
+AppId={{{#MyAppId}}
 AppName={#MyAppName}
 AppVersion={#ProductVersion}
 AppVerName={#MyAppName} v{#ProductVersion}
@@ -322,6 +322,56 @@ begin
 end;
 #endif
 
+procedure CleanupLegacyUninstallArtifacts(const AppDir: string);
+var
+  LegacyDoubleBraceKey: string;
+begin
+  // 1.0.2 安装脚本误写了额外右花括号，导致卸载注册表键为 {GUID}}_is1；升级前先清除以免产生双条卸载记录与 unins001 残留
+  LegacyDoubleBraceKey := 'SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{' + '{#MyAppId}' + '}}_is1';
+  if RegKeyExists(HKLM64, LegacyDoubleBraceKey) or RegKeyExists(HKLM32, LegacyDoubleBraceKey) then
+  begin
+    CleanWildcardFiles(AppDir, 'unins00*.exe');
+    CleanWildcardFiles(AppDir, 'unins00*.dat');
+    CleanWildcardFiles(AppDir, 'unins00*.msg');
+    RegDeleteKeyIncludingSubkeys(HKLM64, LegacyDoubleBraceKey);
+    RegDeleteKeyIncludingSubkeys(HKLM32, LegacyDoubleBraceKey);
+  end;
+
+  if FileExists(AppDir + '\Uninstall.exe') then
+    DeleteFile(AppDir + '\Uninstall.exe');
+  RegDeleteKeyIncludingSubkeys(HKLM64, 'SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\StartupGuard');
+  RegDeleteKeyIncludingSubkeys(HKLM32, 'SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\StartupGuard');
+end;
+
+procedure CleanupSatelliteCultureDirs(const AppDir: string);
+var
+  Cultures: TArrayOfString;
+  I: Integer;
+  TargetDir: string;
+begin
+  SetArrayLength(Cultures, 13);
+  Cultures[0] := 'cs';
+  Cultures[1] := 'de';
+  Cultures[2] := 'es';
+  Cultures[3] := 'fr';
+  Cultures[4] := 'it';
+  Cultures[5] := 'ja';
+  Cultures[6] := 'ko';
+  Cultures[7] := 'pl';
+  Cultures[8] := 'pt-BR';
+  Cultures[9] := 'ru';
+  Cultures[10] := 'tr';
+  Cultures[11] := 'zh-Hans';
+  Cultures[12] := 'zh-Hant';
+
+  for I := 0 to GetArrayLength(Cultures) - 1 do
+  begin
+    TargetDir := AddBackslash(AppDir) + Cultures[I];
+    if DirExists(TargetDir) then
+      DelTree(TargetDir, True, True, True);
+  end;
+end;
+
 function PrepareToInstall(var NeedsRestart: Boolean): string;
 begin
   Result := '';
@@ -331,6 +381,7 @@ begin
     exit;
 #endif
   StopRunningProcessesAndService(500);
+  CleanupLegacyUninstallArtifacts(ExpandConstant('{app}'));
 end;
 
 procedure CleanupBeforeFileExtraction;
@@ -340,21 +391,21 @@ begin
   AppDir := ExpandConstant('{app}');
   StopRunningProcessesAndService(400);
 
-  // 跨部署模式或自旧版 NSIS 升级时清理遗留运行库与旧卸载程序，防止残留与双条卸载记录
+  // 跨部署模式或自旧版升级时清理遗留运行库、附属语言目录与旧卸载程序，防止残留与双条卸载记录
   DeleteFile(AppDir + '\{#MyServiceExeName}');
   DeleteFile(AppDir + '\{#MyTrayExeName}');
   DeleteFile(AppDir + '\{#MyProbeExeName}');
   DeleteFile(AppDir + '\{#MyAppExeName}');
-  DeleteFile(AppDir + '\Uninstall.exe');
+  DeleteFile(AppDir + '\createdump.exe');
   CleanWildcardFiles(AppDir, '*.dll');
   CleanWildcardFiles(AppDir, '*.json');
+  CleanWildcardFiles(AppDir, '*.xml');
   CleanWildcardFiles(AppDir, '*.deps.json');
   CleanWildcardFiles(AppDir, '*.runtimeconfig.json');
   if DirExists(AppDir + '\runtimes') then
     DelTree(AppDir + '\runtimes', True, True, True);
-
-  RegDeleteKeyIncludingSubkeys(HKLM64, 'SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\StartupGuard');
-  RegDeleteKeyIncludingSubkeys(HKLM32, 'SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\StartupGuard');
+  CleanupSatelliteCultureDirs(AppDir);
+  CleanupLegacyUninstallArtifacts(AppDir);
 end;
 
 procedure ConfigureSharedDataPermissionsAndService;
@@ -516,6 +567,8 @@ begin
         ScExe := ExpandConstant('{sys}\sc.exe');
         RunHidden(ScExe, 'delete {#MyServiceName}');
         CleanAllAutoStartRegistryKeys;
+        RegDeleteKeyIncludingSubkeys(HKLM64, 'SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{' + '{#MyAppId}' + '}}_is1');
+        RegDeleteKeyIncludingSubkeys(HKLM32, 'SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{' + '{#MyAppId}' + '}}_is1');
         RegDeleteKeyIncludingSubkeys(HKLM64, 'SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\StartupGuard');
         RegDeleteKeyIncludingSubkeys(HKLM32, 'SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\StartupGuard');
       end;

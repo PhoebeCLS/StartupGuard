@@ -5,10 +5,12 @@
     <UseWPF>true</UseWPF>
     <RootNamespace>StartupGuard.TrayHost</RootNamespace>
     <AssemblyName>StartupGuard.TrayHost</AssemblyName>
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
     <ApplicationIcon>Assets\app.ico</ApplicationIcon>
   </PropertyGroup>
 
   <ItemGroup>
+    <Page Include="..\StartupGuard.App\Themes\FluentSharedStyles.xaml" Link="Themes\FluentSharedStyles.xaml" />
     <Content Include="Assets\app.ico">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>

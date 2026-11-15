@@ -82,6 +82,10 @@ internal static partial class Program
                 Theme = IsSystemLightTheme() ? Wpf.Ui.Appearance.ApplicationTheme.Light : Wpf.Ui.Appearance.ApplicationTheme.Dark
             });
             wpfApp.Resources.MergedDictionaries.Add(new Wpf.Ui.Markup.ControlsDictionary());
+            wpfApp.Resources.MergedDictionaries.Add(new System.Windows.ResourceDictionary
+            {
+                Source = new Uri("pack://application:,,,/Themes/FluentSharedStyles.xaml", UriKind.Absolute)
+            });
         }
         catch { }
     }

@@ -244,6 +244,8 @@ public class Feedback12BatchTests
             foreach (Match r in Regex.Matches(content, @"\{StaticResource\s+([^\}\s,]+)"))
             {
                 string key = r.Groups[1].Value;
+                if (key.StartsWith("{x:", StringComparison.Ordinal))
+                    continue;
                 if (!localKeys.Contains(key))
                     missing.Add($"{Path.GetFileName(xamlPath)}: {key}");
             }
@@ -2285,5 +2287,75 @@ public class Feedback12BatchTests
         Assert.Contains("InterceptionAction.DismissWithoutChange", trayCs);
         Assert.Contains("{Binding LogActionButtonText}", mainXaml);
         Assert.Contains("isPendingManual", mainCs);
+    }
+
+    [Fact]
+    public void TextClarity_WinUi3DropdownAnimations_AndSmoothInnoUpgrade_ContractsHold()
+    {
+        string repoRoot = FindRepoRoot();
+        string mainXaml = File.ReadAllText(Path.Combine(repoRoot, "src", "StartupGuard.App", "MainWindow.xaml"));
+        string mainCs = File.ReadAllText(Path.Combine(repoRoot, "src", "StartupGuard.App", "MainWindow.xaml.cs"));
+        string appXaml = File.ReadAllText(Path.Combine(repoRoot, "src", "StartupGuard.App", "App.xaml"));
+        string appCs = File.ReadAllText(Path.Combine(repoRoot, "src", "StartupGuard.App", "App.xaml.cs"));
+        string sharedStyles = File.ReadAllText(Path.Combine(repoRoot, "src", "StartupGuard.App", "Themes", "FluentSharedStyles.xaml"));
+        string trayCsproj = File.ReadAllText(Path.Combine(repoRoot, "src", "StartupGuard.TrayHost", "StartupGuard.TrayHost.csproj"));
+        string trayCs = File.ReadAllText(Path.Combine(repoRoot, "src", "StartupGuard.TrayHost", "Program.cs"));
+        string diffXaml = File.ReadAllText(Path.Combine(repoRoot, "src", "StartupGuard.TrayHost", "InterceptionDiffDialogWindow.xaml"));
+        string iss = File.ReadAllText(Path.Combine(repoRoot, "installer", "StartupGuard.iss"));
+
+        // 1. 字体 ClearType 与像素对齐契约：两套主窗体启用 Display + ClearType + ClearTypeHint + UseLayoutRounding 且无小数像素字号
+        foreach (string xaml in new[] { mainXaml, diffXaml })
+        {
+            Assert.Contains("UseLayoutRounding=\"True\"", xaml);
+            Assert.Contains("SnapsToDevicePixels=\"True\"", xaml);
+            Assert.Contains("TextOptions.TextFormattingMode=\"Display\"", xaml);
+            Assert.Contains("TextOptions.TextRenderingMode=\"ClearType\"", xaml);
+            Assert.Contains("RenderOptions.ClearTypeHint=\"Enabled\"", xaml);
+            Assert.DoesNotMatch(@"FontSize=""[0-9]+\.[0-9]+""", xaml);
+        }
+
+        Assert.DoesNotMatch(@"FontSize\s*=\s*[0-9]+\.[0-9]+", mainCs);
+        Assert.DoesNotMatch(@"FontSize\s*=\s*[0-9]+\.[0-9]+", appCs);
+
+        // 2. DropShadowEffect 必须隔离在无文本子元素的阴影宿主 Border 中，避免文本栅格化发糊
+        var modalShadowMatches = System.Text.RegularExpressions.Regex.Matches(
+            mainXaml,
+            @"<Border(?<attrs>[^>]*)>\s*<Border\.Effect>\s*<DropShadowEffect");
+        Assert.Equal(7, modalShadowMatches.Count);
+        foreach (System.Text.RegularExpressions.Match m in modalShadowMatches)
+        {
+            Assert.Contains("IsHitTestVisible=\"False\"", m.Groups["attrs"].Value);
+        }
+
+        var diffShadowMatches = System.Text.RegularExpressions.Regex.Matches(
+            diffXaml,
+            @"<Border(?<attrs>[^>]*)>\s*<Border\.Effect>\s*<DropShadowEffect");
+        Assert.Single(diffShadowMatches);
+        Assert.Contains("IsHitTestVisible=\"False\"", diffShadowMatches[0].Groups["attrs"].Value);
+
+        // 3. Tuba / WinUI 3 下拉动效与 TrayHost 清单契约
+        Assert.Contains("Themes/FluentSharedStyles.xaml", appXaml);
+        Assert.Contains("<ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>", trayCsproj);
+        Assert.Contains("FluentSharedStyles.xaml", trayCsproj);
+        Assert.Contains("Themes/FluentSharedStyles.xaml", trayCs);
+
+        Assert.Contains("Placement=\"Center\"", sharedStyles);
+        Assert.Contains("PopupAnimation=\"None\"", sharedStyles);
+        Assert.Contains("x:Name=\"DropDownShadow\"", sharedStyles);
+        Assert.Contains("(ScaleTransform.ScaleY)", sharedStyles);
+        Assert.Contains("(TranslateTransform.Y)", sharedStyles);
+        Assert.Contains("TargetProperty=\"Opacity\"", sharedStyles);
+
+        Assert.Contains("ScaleTransform.ScaleYProperty", mainCs);
+        Assert.Contains("TranslateTransform.YProperty", mainCs);
+        Assert.Contains("OpacityProperty", mainCs);
+
+        // 4. Inno Setup 1.0.2 -> 1.0.3 平滑升级：修复 AppId 多余右括号并清理遗留卸载记录与附属语言目录
+        Assert.Contains("AppId={{{#MyAppId}}", iss);
+        Assert.DoesNotContain("AppId={{{#MyAppId}}}", iss);
+        Assert.Contains("CleanupLegacyUninstallArtifacts", iss);
+        Assert.Contains("unins00*.dat", iss);
+        Assert.Contains("CleanupSatelliteCultureDirs", iss);
+        Assert.Contains("zh-Hans", iss);
     }
 }

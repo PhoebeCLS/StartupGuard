@@ -134,8 +134,13 @@ public partial class App : Application
                 WindowStartupLocation = WindowStartupLocation.CenterScreen,
                 ResizeMode = ResizeMode.NoResize,
                 ExtendsContentIntoTitleBar = true,
-                WindowBackdropType = Wpf.Ui.Controls.WindowBackdropType.Mica
+                WindowBackdropType = Wpf.Ui.Controls.WindowBackdropType.Mica,
+                UseLayoutRounding = true,
+                SnapsToDevicePixels = true
             };
+            TextOptions.SetTextFormattingMode(win, TextFormattingMode.Display);
+            TextOptions.SetTextRenderingMode(win, TextRenderingMode.ClearType);
+            RenderOptions.SetClearTypeHint(win, ClearTypeHint.Enabled);
 
             var rootGrid = new Grid();
             rootGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
@@ -177,7 +182,7 @@ public partial class App : Application
                 Child = new TextBlock
                 {
                     Text = errorMessage,
-                    FontSize = 12.5,
+                    FontSize = 13,
                     Foreground = new SolidColorBrush(Color.FromRgb(0xD1, 0x34, 0x38)),
                     TextWrapping = TextWrapping.Wrap,
                     TextAlignment = TextAlignment.Left
@@ -196,7 +201,7 @@ public partial class App : Application
             {
                 Text = logPath,
                 IsReadOnly = true,
-                FontSize = 11.5,
+                FontSize = 12,
                 Margin = new Thickness(0, 0, 0, 12)
             });
 

@@ -13,7 +13,12 @@
         ExtendsContentIntoTitleBar="True"
         WindowBackdropType="Mica"
         Background="Transparent"
-        FontFamily="Microsoft YaHei UI, Segoe UI Variable, Segoe UI">
+        UseLayoutRounding="True"
+        SnapsToDevicePixels="True"
+        TextOptions.TextFormattingMode="Display"
+        TextOptions.TextRenderingMode="ClearType"
+        RenderOptions.ClearTypeHint="Enabled"
+        FontFamily="Segoe UI Variable Text, Segoe UI Variable, Microsoft YaHei UI, Segoe UI">
 
     <Window.Resources>
         <conv:ProgramIconConverter x:Key="ProgramIconConverter"/>
@@ -282,7 +287,7 @@
                 <TextBlock x:Name="TxtTitleBarBrand"
                            Grid.Column="0"
                            Text="StartupGuard"
-                           FontSize="12.5"
+                           FontSize="13"
                            FontWeight="SemiBold"
                            VerticalAlignment="Center"
                            HorizontalAlignment="Left"
@@ -302,7 +307,7 @@
                             PlaceholderText="搜索自启项、服务、驱动或右键菜单..."
                             Icon="{ui:SymbolIcon Search24}"
                             ClearButtonEnabled="True"
-                            FontSize="12.5"
+                            FontSize="13"
                             WindowChrome.IsHitTestVisibleInChrome="True"
                             TextChanged="TxtGlobalSearch_TextChanged"
                             PreviewMouseLeftButtonDown="TxtGlobalSearch_PreviewMouseLeftButtonDown"
@@ -365,7 +370,7 @@
                             <RadioButton x:Name="NavStartupManager" Style="{StaticResource WinUi3NavRadioButtonStyle}" GroupName="MainNavGroup" IsChecked="True" Checked="Nav_Checked" Tag="PageStartupManager">
                                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                                     <ui:SymbolIcon Symbol="Rocket24" Margin="2,0,12,0" FontSize="17" Foreground="#0078D4"/>
-                                    <TextBlock Text="自启管理" FontSize="13.5" VerticalAlignment="Center"/>
+                                    <TextBlock Text="自启管理" FontSize="14" VerticalAlignment="Center"/>
                                 </StackPanel>
                             </RadioButton>
 
@@ -378,7 +383,7 @@
                                     </Grid.ColumnDefinitions>
                                     <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
                                         <ui:SymbolIcon Symbol="DocumentTable24" Margin="2,0,12,0" FontSize="17" Foreground="#009688"/>
-                                        <TextBlock Text="右键菜单管理" FontSize="13.5" VerticalAlignment="Center"/>
+                                        <TextBlock Text="右键菜单管理" FontSize="14" VerticalAlignment="Center"/>
                                     </StackPanel>
                                     <ui:SymbolIcon Grid.Column="1" x:Name="IconContextMenuChevron" Symbol="ChevronDown12" FontSize="10" Foreground="{DynamicResource TextFillColorTertiaryBrush}" VerticalAlignment="Center" Margin="0,0,4,0" RenderTransformOrigin="0.5,0.5">
                                         <ui:SymbolIcon.RenderTransform>
@@ -389,7 +394,13 @@
                             </RadioButton>
 
                             <!-- 右键菜单二级子菜单（Win11 现代菜单置顶，其余场景按功能顺序排列） -->
-                            <StackPanel x:Name="ContextMenuSubListPanel" Visibility="Collapsed" Margin="8,0,0,4" Opacity="0">
+                            <StackPanel x:Name="ContextMenuSubListPanel" Visibility="Collapsed" ClipToBounds="True" Margin="8,0,0,4" Opacity="0">
+                                <StackPanel.LayoutTransform>
+                                    <ScaleTransform x:Name="ScaleContextMenuSubList" ScaleX="1" ScaleY="0"/>
+                                </StackPanel.LayoutTransform>
+                                <StackPanel.RenderTransform>
+                                    <TranslateTransform x:Name="TranslateContextMenuSubList" Y="-8"/>
+                                </StackPanel.RenderTransform>
                                 <RadioButton x:Name="SubNavWin11Modern" Style="{StaticResource WinUi3NavSubItemStyle}" GroupName="ContextMenuSubNavGroup" Checked="SubNavContextMenu_Checked" Tag="Win11Modern">
                                     <Grid HorizontalAlignment="Stretch">
                                         <Grid.ColumnDefinitions>
@@ -401,7 +412,7 @@
                                             <TextBlock Text="Win11 现代菜单" FontWeight="SemiBold" VerticalAlignment="Center"/>
                                         </StackPanel>
                                         <Border Grid.Column="1" Background="{DynamicResource AccentFillColorDefaultBrush}" CornerRadius="4" Padding="5,1" Margin="4,0,0,0" VerticalAlignment="Center">
-                                            <TextBlock Text="新版" FontSize="9.5" FontWeight="Bold" Foreground="White"/>
+                                            <TextBlock Text="新版" FontSize="10" FontWeight="Bold" Foreground="White"/>
                                         </Border>
                                     </Grid>
                                 </RadioButton>
@@ -435,7 +446,7 @@
                                     </Grid.ColumnDefinitions>
                                     <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
                                         <ui:SymbolIcon Symbol="Clock24" Margin="2,0,12,0" FontSize="17" Foreground="#FFB900"/>
-                                        <TextBlock Text="待审核" FontSize="13.5" VerticalAlignment="Center"/>
+                                        <TextBlock Text="待审核" FontSize="14" VerticalAlignment="Center"/>
                                     </StackPanel>
                                     <Border Grid.Column="1" x:Name="BadgePendingCount" Background="#FFB900" CornerRadius="10" Padding="7,2" VerticalAlignment="Center" Visibility="Collapsed">
                                         <TextBlock x:Name="TxtPendingCount" Text="0" FontSize="11" FontWeight="Bold" Foreground="Black"/>
@@ -447,7 +458,7 @@
                             <RadioButton x:Name="NavLogs" Style="{StaticResource WinUi3NavRadioButtonStyle}" GroupName="MainNavGroup" Checked="Nav_Checked" Tag="PageLogs">
                                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                                     <ui:SymbolIcon Symbol="History24" Margin="2,0,12,0" FontSize="17" Foreground="#8764B8"/>
-                                    <TextBlock Text="日志与规则" FontSize="13.5" VerticalAlignment="Center"/>
+                                    <TextBlock Text="日志与规则" FontSize="14" VerticalAlignment="Center"/>
                                 </StackPanel>
                             </RadioButton>
                         </StackPanel>
@@ -459,7 +470,7 @@
                         <RadioButton x:Name="NavSettings" Style="{StaticResource WinUi3NavRadioButtonStyle}" GroupName="MainNavGroup" Checked="Nav_Checked" Tag="PageSettings">
                             <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                                 <ui:SymbolIcon Symbol="Settings24" Margin="2,0,12,0" FontSize="17" Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
-                                <TextBlock Text="设置与关于" FontSize="13.5" VerticalAlignment="Center"/>
+                                <TextBlock Text="设置与关于" FontSize="14" VerticalAlignment="Center"/>
                             </StackPanel>
                         </RadioButton>
                     </StackPanel>
@@ -648,11 +659,11 @@
                                                     </Grid>
                                                 </Border>
                                                 <StackPanel Grid.Column="1" VerticalAlignment="Center">
-                                                    <TextBlock Text="{Binding AppTitle}" FontSize="13.5" FontWeight="SemiBold" Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
+                                                    <TextBlock Text="{Binding AppTitle}" FontSize="14" FontWeight="SemiBold" Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
                                                     <TextBlock Text="{Binding CategorySummary}" FontSize="11" Foreground="{DynamicResource TextFillColorSecondaryBrush}" Margin="0,1,0,0"/>
                                                 </StackPanel>
                                                 <Border Grid.Column="2" Padding="8,2" CornerRadius="10" Background="{DynamicResource ControlFillColorSecondaryBrush}" VerticalAlignment="Center" Margin="10,0,0,0">
-                                                    <TextBlock Text="{Binding CountText}" FontSize="11.5" Foreground="{DynamicResource TextFillColorSecondaryBrush}" FontWeight="SemiBold"/>
+                                                    <TextBlock Text="{Binding CountText}" FontSize="12" Foreground="{DynamicResource TextFillColorSecondaryBrush}" FontWeight="SemiBold"/>
                                                 </Border>
                                             </Grid>
                                         </Expander.Header>
@@ -660,7 +671,7 @@
                                             <ItemsControl.ItemTemplate>
                                                 <DataTemplate>
                                                     <StackPanel Margin="0,0,0,8">
-                                                        <TextBlock Text="{Binding CategoryTitle}" FontSize="11.5" FontWeight="SemiBold" Foreground="{DynamicResource TextFillColorSecondaryBrush}" Margin="4,0,0,4"/>
+                                                        <TextBlock Text="{Binding CategoryTitle}" FontSize="12" FontWeight="SemiBold" Foreground="{DynamicResource TextFillColorSecondaryBrush}" Margin="4,0,0,4"/>
                                                         <ItemsControl ItemsSource="{Binding Items}">
                                                             <ItemsControl.ItemTemplate>
                                                                 <DataTemplate>
@@ -682,20 +693,20 @@
                                                                             </Border>
                                                                             <StackPanel Grid.Column="1" Margin="12,0,12,0" VerticalAlignment="Center">
                                                                                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                                                                                    <TextBlock Text="{Binding DisplayName}" FontWeight="SemiBold" FontSize="13.5" Foreground="{DynamicResource TextFillColorPrimaryBrush}" VerticalAlignment="Center"/>
+                                                                                    <TextBlock Text="{Binding DisplayName}" FontWeight="SemiBold" FontSize="14" Foreground="{DynamicResource TextFillColorPrimaryBrush}" VerticalAlignment="Center"/>
                                                                                     <Border Margin="8,0,0,0" Padding="5,1" CornerRadius="4" Background="{DynamicResource ControlFillColorDefaultBrush}">
-                                                                                        <TextBlock Text="{Binding CategoryName}" FontSize="10.5" Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+                                                                                        <TextBlock Text="{Binding CategoryName}" FontSize="11" Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
                                                                                     </Border>
                                                                                     <Border Margin="6,0,0,0" Padding="5,1" CornerRadius="4" Background="#1A107C41">
-                                                                                        <TextBlock Text="{Binding Publisher}" FontSize="10.5" Foreground="#107C41" FontWeight="SemiBold"/>
+                                                                                        <TextBlock Text="{Binding Publisher}" FontSize="11" Foreground="#107C41" FontWeight="SemiBold"/>
                                                                                     </Border>
                                                                                 </StackPanel>
-                                                                                <TextBlock Text="{Binding CommandOrPath}" FontSize="11.5" Margin="0,2,0,0" TextTrimming="CharacterEllipsis" Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
-                                                                                <TextBlock Text="{Binding LocationKey}" FontSize="10.5" Margin="0,1,0,0" Foreground="{DynamicResource TextFillColorTertiaryBrush}" TextTrimming="CharacterEllipsis"/>
+                                                                                <TextBlock Text="{Binding CommandOrPath}" FontSize="12" Margin="0,2,0,0" TextTrimming="CharacterEllipsis" Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                                                                                <TextBlock Text="{Binding LocationKey}" FontSize="11" Margin="0,1,0,0" Foreground="{DynamicResource TextFillColorTertiaryBrush}" TextTrimming="CharacterEllipsis"/>
                                                                             </StackPanel>
                                                                             <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
                                                                                 <ui:ToggleSwitch IsChecked="{Binding IsEnabled, Mode=TwoWay}" Margin="0,0,10,0" Click="TglStartupItem_Click" Tag="{Binding}" Visibility="{Binding IsBinaryStateCategory, Converter={StaticResource BooleanToVisibilityConverter}}"/>
-                                                                                <ComboBox Width="106" Margin="0,0,10,0" FontSize="11.5" Padding="8,4"
+                                                                                <ComboBox Width="106" Margin="0,0,10,0" FontSize="12" Padding="8,4"
                                                                                           Visibility="{Binding IsMultiStateCategory, Converter={StaticResource BooleanToVisibilityConverter}}"
                                                                                           ItemsSource="{Binding AvailableStateOptions}"
                                                                                           SelectedItem="{Binding SelectedStateOption, Mode=OneWay}"
@@ -780,13 +791,13 @@
                             <Border x:Name="PanelFileTypeParamBar" Visibility="Collapsed" Margin="0,8,0,0" Padding="14,10" CornerRadius="6" Background="{DynamicResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" BorderThickness="1">
                                 <StackPanel>
                                     <WrapPanel x:Name="PanelCustomExtensionInput" Visibility="Collapsed" Orientation="Horizontal" VerticalAlignment="Center">
-                                        <TextBlock Text="扩展名：" FontSize="12.5" VerticalAlignment="Center" Margin="0,0,8,0" Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+                                        <TextBlock Text="扩展名：" FontSize="13" VerticalAlignment="Center" Margin="0,0,8,0" Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
                                         <ui:TextBox x:Name="TxtCustomExtension" Width="180" PlaceholderText="例如 .txt 或 .zip" Text=".txt" Margin="0,0,8,0" KeyDown="TxtCustomExtension_KeyDown"/>
                                         <ui:Button x:Name="BtnLoadCustomExtension" Content="加载" Appearance="Secondary" Icon="{ui:SymbolIcon ArrowClockwise24}" Click="BtnLoadCustomExtension_Click"/>
                                     </WrapPanel>
 
                                     <StackPanel x:Name="PanelPerceivedTypeInput" Visibility="Collapsed" Orientation="Horizontal" VerticalAlignment="Center">
-                                        <TextBlock Text="选择感知类型：" FontSize="12.5" VerticalAlignment="Center" Margin="0,0,10,0" Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+                                        <TextBlock Text="选择感知类型：" FontSize="13" VerticalAlignment="Center" Margin="0,0,10,0" Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
                                         <ComboBox x:Name="CmbPerceivedTypeSelector" Width="200" SelectionChanged="CmbPerceivedTypeSelector_SelectionChanged">
                                             <ComboBoxItem Content="文本文件 (text)" Tag="text"/>
                                             <ComboBoxItem Content="文档文件 (document)" Tag="document"/>
@@ -799,7 +810,7 @@
                                     </StackPanel>
 
                                     <StackPanel x:Name="PanelDirectoryTypeInput" Visibility="Collapsed" Orientation="Horizontal" VerticalAlignment="Center">
-                                        <TextBlock Text="选择目录类型：" FontSize="12.5" VerticalAlignment="Center" Margin="0,0,10,0" Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+                                        <TextBlock Text="选择目录类型：" FontSize="13" VerticalAlignment="Center" Margin="0,0,10,0" Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
                                         <ComboBox x:Name="CmbDirectoryTypeSelector" Width="200" SelectionChanged="CmbDirectoryTypeSelector_SelectionChanged">
                                             <ComboBoxItem Content="文档文件夹 (Document)" Tag="Document"/>
                                             <ComboBoxItem Content="图片文件夹 (Image)" Tag="Image"/>
@@ -828,7 +839,7 @@
                                          AcceptsReturn="True"
                                          TextWrapping="Wrap"
                                          MaxHeight="135"
-                                         FontSize="11.5"
+                                         FontSize="12"
                                          FontFamily="Consolas, Microsoft YaHei UI"
                                          VerticalScrollBarVisibility="Auto"/>
                             </StackPanel>
@@ -851,7 +862,7 @@
                         <!-- GUID 锁：仅显示 Shell Extensions\Blocked 项并支持添加新 GUID 锁 -->
                         <Border x:Name="PanelGuidBlockedBar" Visibility="Collapsed" Margin="0,0,0,12" Padding="14,10" CornerRadius="6" Background="{DynamicResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" BorderThickness="1">
                             <WrapPanel Orientation="Horizontal" VerticalAlignment="Center">
-                                <TextBlock Text="仅显示 Shell Extensions\Blocked 中锁定的 CLSID：" FontSize="12.5" VerticalAlignment="Center" Margin="0,0,10,0" Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+                                <TextBlock Text="仅显示 Shell Extensions\Blocked 中锁定的 CLSID：" FontSize="13" VerticalAlignment="Center" Margin="0,0,10,0" Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
                                 <ui:TextBox x:Name="TxtNewBlockedGuid" Width="250" PlaceholderText="输入 {CLSID} 添加锁定..." Margin="0,0,8,0"/>
                                 <ui:Button x:Name="BtnAddBlockedGuid" Content="+ 新增 GUID 锁" Appearance="Secondary" Click="BtnAddBlockedGuid_Click"/>
                             </WrapPanel>
@@ -917,7 +928,7 @@
 
                                         <StackPanel Grid.Column="1" Margin="14,0,14,0" VerticalAlignment="Center">
                                             <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                                                <TextBlock Text="{Binding DisplayName}" FontWeight="Bold" FontSize="13.5" Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
+                                                <TextBlock Text="{Binding DisplayName}" FontWeight="Bold" FontSize="14" Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
                                                 <Border Margin="8,0,0,0" Padding="5,1.5" CornerRadius="4" Background="{DynamicResource ControlFillColorDefaultBrush}">
                                                     <TextBlock Text="{Binding CategoryName}" FontSize="11" Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
                                                 </Border>
@@ -926,7 +937,7 @@
                                                 </Border>
                                             </StackPanel>
 
-                                            <TextBlock Text="{Binding CommandOrPath}" FontSize="11.5" Margin="0,3,0,0" TextTrimming="CharacterEllipsis" Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+                                            <TextBlock Text="{Binding CommandOrPath}" FontSize="12" Margin="0,3,0,0" TextTrimming="CharacterEllipsis" Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
                                             <TextBlock Text="{Binding LocationKey}" FontSize="11" Margin="0,2,0,0" Foreground="{DynamicResource TextFillColorTertiaryBrush}" TextTrimming="CharacterEllipsis"/>
                                             <TextBlock Text="{Binding Note, StringFormat='备注: {0}'}" FontSize="11" Margin="0,2,0,0" Foreground="#0078D4" TextTrimming="CharacterEllipsis" Visibility="{Binding HasNote, Converter={StaticResource BooleanToVisibilityConverter}}"/>
                                         </StackPanel>
@@ -939,7 +950,7 @@
 
                                             <ui:ToggleSwitch IsChecked="{Binding IsEnabled, Mode=TwoWay}" Margin="0,0,10,0" Click="TglStartupItem_Click" Tag="{Binding}" />
 
-                                            <ui:Button Content="··· 更多 ▾" Appearance="Secondary" FontSize="11.5" Padding="8,2" Height="28"
+                                            <ui:Button Content="··· 更多 ▾" Appearance="Secondary" FontSize="12" Padding="8,2" Height="28"
                                                        Click="BtnMoreActions_Click" Tag="{Binding}">
                                                 <ui:Button.ContextMenu>
                                                     <ContextMenu>
@@ -987,11 +998,11 @@
                                                     </Grid>
                                                 </Border>
                                                 <StackPanel Grid.Column="1" VerticalAlignment="Center">
-                                                    <TextBlock Text="{Binding AppTitle}" FontSize="13.5" FontWeight="SemiBold" Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
+                                                    <TextBlock Text="{Binding AppTitle}" FontSize="14" FontWeight="SemiBold" Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
                                                     <TextBlock Text="{Binding CategorySummary}" FontSize="11" Foreground="{DynamicResource TextFillColorSecondaryBrush}" Margin="0,1,0,0"/>
                                                 </StackPanel>
                                                 <Border Grid.Column="2" Padding="8,2" CornerRadius="10" Background="{DynamicResource ControlFillColorSecondaryBrush}" VerticalAlignment="Center" Margin="10,0,0,0">
-                                                    <TextBlock Text="{Binding CountText}" FontSize="11.5" Foreground="{DynamicResource TextFillColorSecondaryBrush}" FontWeight="SemiBold"/>
+                                                    <TextBlock Text="{Binding CountText}" FontSize="12" Foreground="{DynamicResource TextFillColorSecondaryBrush}" FontWeight="SemiBold"/>
                                                 </Border>
                                             </Grid>
                                         </Expander.Header>
@@ -1016,23 +1027,23 @@
                                                             </Border>
                                                             <StackPanel Grid.Column="1" Margin="12,0,12,0" VerticalAlignment="Center">
                                                                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                                                                    <TextBlock Text="{Binding DisplayName}" FontWeight="SemiBold" FontSize="13.5" Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
+                                                                    <TextBlock Text="{Binding DisplayName}" FontWeight="SemiBold" FontSize="14" Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
                                                                     <Border Margin="8,0,0,0" Padding="5,1" CornerRadius="4" Background="{DynamicResource ControlFillColorDefaultBrush}">
-                                                                        <TextBlock Text="{Binding CategoryName}" FontSize="10.5" Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+                                                                        <TextBlock Text="{Binding CategoryName}" FontSize="11" Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
                                                                     </Border>
                                                                     <Border Margin="6,0,0,0" Padding="5,1" CornerRadius="4" Background="#1A009688">
-                                                                        <TextBlock Text="{Binding Publisher}" FontSize="10.5" Foreground="#009688" FontWeight="SemiBold"/>
+                                                                        <TextBlock Text="{Binding Publisher}" FontSize="11" Foreground="#009688" FontWeight="SemiBold"/>
                                                                     </Border>
                                                                 </StackPanel>
-                                                                <TextBlock Text="{Binding CommandOrPath}" FontSize="11.5" Margin="0,2,0,0" TextTrimming="CharacterEllipsis" Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
-                                                                <TextBlock Text="{Binding LocationKey}" FontSize="10.5" Margin="0,1,0,0" Foreground="{DynamicResource TextFillColorTertiaryBrush}" TextTrimming="CharacterEllipsis"/>
+                                                                <TextBlock Text="{Binding CommandOrPath}" FontSize="12" Margin="0,2,0,0" TextTrimming="CharacterEllipsis" Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+                                                                <TextBlock Text="{Binding LocationKey}" FontSize="11" Margin="0,1,0,0" Foreground="{DynamicResource TextFillColorTertiaryBrush}" TextTrimming="CharacterEllipsis"/>
                                                             </StackPanel>
                                                             <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
                                                                 <ui:Button Content="深入分析" Appearance="Secondary" FontSize="11" Padding="8,2" Height="26" Margin="0,0,8,0"
                                                                            Visibility="{Binding CanDeepAnalyze, Converter={StaticResource BooleanToVisibilityConverter}}"
                                                                            Click="BtnAnalyzeItem_Click" Tag="{Binding}"/>
                                                                 <ui:ToggleSwitch IsChecked="{Binding IsEnabled, Mode=TwoWay}" Margin="0,0,10,0" Click="TglStartupItem_Click" Tag="{Binding}" />
-                                                                <ui:Button Content="··· 更多 ▾" Appearance="Secondary" FontSize="11.5" Padding="8,2" Height="26"
+                                                                <ui:Button Content="··· 更多 ▾" Appearance="Secondary" FontSize="12" Padding="8,2" Height="26"
                                                                            Click="BtnMoreActions_Click" Tag="{Binding}">
                                                                     <ui:Button.ContextMenu>
                                                                         <ContextMenu>
@@ -1069,7 +1080,7 @@
                             <Border Padding="20,18" CornerRadius="8" Background="{DynamicResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" BorderThickness="1" Margin="0,0,0,14">
                                 <StackPanel>
                                     <TextBlock Text="菜单分析" FontSize="19" FontWeight="Bold" Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
-                                    <TextBlock Text="分析文件、文件夹或快捷方式，并跳转到匹配的右键菜单场景（支持直接拖拽文件/文件夹到此处）。" FontSize="12.5" Foreground="{DynamicResource TextFillColorSecondaryBrush}" Margin="0,6,0,14" TextWrapping="Wrap"/>
+                                    <TextBlock Text="分析文件、文件夹或快捷方式，并跳转到匹配的右键菜单场景（支持直接拖拽文件/文件夹到此处）。" FontSize="13" Foreground="{DynamicResource TextFillColorSecondaryBrush}" Margin="0,6,0,14" TextWrapping="Wrap"/>
                                     <StackPanel Orientation="Horizontal">
                                         <ui:Button x:Name="BtnAnalyzeTargetFile" Content="分析文件" Appearance="Secondary" Icon="{ui:SymbolIcon Document24}" Margin="0,0,10,0" Click="BtnAnalyzeTargetFile_Click"/>
                                         <ui:Button x:Name="BtnAnalyzeTargetFolder" Content="分析文件夹" Appearance="Secondary" Icon="{ui:SymbolIcon FolderOpen24}" Click="BtnAnalyzeTargetFolder_Click"/>
@@ -1079,7 +1090,7 @@
 
                             <Border x:Name="PanelAnalyzedTargetInfo" Visibility="Collapsed" Padding="14,10" CornerRadius="6" Background="{DynamicResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" BorderThickness="1" Margin="0,0,0,10">
                                 <StackPanel>
-                                    <TextBlock Text="当前分析对象" FontSize="11.5" Foreground="{DynamicResource TextFillColorTertiaryBrush}"/>
+                                    <TextBlock Text="当前分析对象" FontSize="12" Foreground="{DynamicResource TextFillColorTertiaryBrush}"/>
                                     <TextBlock x:Name="TxtAnalyzedTargetPath" Text="" FontSize="13" FontWeight="SemiBold" Foreground="{DynamicResource TextFillColorPrimaryBrush}" Margin="0,2,0,0" TextWrapping="Wrap"/>
                                 </StackPanel>
                             </Border>
@@ -1094,9 +1105,9 @@
                                                     <ColumnDefinition Width="Auto"/>
                                                 </Grid.ColumnDefinitions>
                                                 <StackPanel Grid.Column="0" VerticalAlignment="Center" Margin="0,0,12,0">
-                                                    <TextBlock Text="{Binding BreadcrumbText}" FontSize="11.5" Foreground="#0078D4" FontWeight="SemiBold"/>
+                                                    <TextBlock Text="{Binding BreadcrumbText}" FontSize="12" Foreground="#0078D4" FontWeight="SemiBold"/>
                                                     <TextBlock Text="{Binding Title}" FontSize="14" FontWeight="SemiBold" Foreground="{DynamicResource TextFillColorPrimaryBrush}" Margin="0,2,0,0"/>
-                                                    <TextBlock Text="{Binding Subtitle}" FontSize="11.5" Foreground="{DynamicResource TextFillColorSecondaryBrush}" Margin="0,2,0,0" TextTrimming="CharacterEllipsis"/>
+                                                    <TextBlock Text="{Binding Subtitle}" FontSize="12" Foreground="{DynamicResource TextFillColorSecondaryBrush}" Margin="0,2,0,0" TextTrimming="CharacterEllipsis"/>
                                                 </StackPanel>
                                                 <ui:Button Grid.Column="1" Content="跳转到管理" Appearance="Secondary" Icon="{ui:SymbolIcon ArrowRight24}" Click="BtnJumpAnalysisMatch_Click" Tag="{Binding}" VerticalAlignment="Center"/>
                                             </Grid>
@@ -1120,8 +1131,8 @@
                                         <ColumnDefinition Width="Auto"/>
                                     </Grid.ColumnDefinitions>
                                     <StackPanel Grid.Column="0" VerticalAlignment="Center" Margin="0,0,12,0">
-                                        <TextBlock Text="Win+X 快捷菜单分组管理" FontSize="13.5" FontWeight="SemiBold" Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
-                                        <TextBlock x:Name="TxtWinXStatusHint" Text="按 Group 分组展示，可开关、重命名、上移/下移排序、恢复默认或删除；改动后需重启资源管理器生效" FontSize="11.5" Margin="0,2,0,0" Foreground="{DynamicResource TextFillColorSecondaryBrush}" TextWrapping="Wrap"/>
+                                        <TextBlock Text="Win+X 快捷菜单分组管理" FontSize="14" FontWeight="SemiBold" Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
+                                        <TextBlock x:Name="TxtWinXStatusHint" Text="按 Group 分组展示，可开关、重命名、上移/下移排序、恢复默认或删除；改动后需重启资源管理器生效" FontSize="12" Margin="0,2,0,0" Foreground="{DynamicResource TextFillColorSecondaryBrush}" TextWrapping="Wrap"/>
                                     </StackPanel>
                                     <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
                                         <ui:Button x:Name="BtnWinXCreateGroup" Content="+ 新建分组" Appearance="Secondary" Padding="10,5" FontSize="12" Margin="0,0,8,0" Click="BtnWinXCreateGroup_Click"/>
@@ -1179,8 +1190,8 @@
                                                                     </Grid>
                                                                 </Border>
                                                                 <StackPanel Grid.Column="1" Margin="12,0,12,0" VerticalAlignment="Center">
-                                                                    <TextBlock Text="{Binding DisplayName}" FontWeight="SemiBold" FontSize="13.5" Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
-                                                                    <TextBlock Text="{Binding TargetPath}" FontSize="11.5" Margin="0,2,0,0" TextTrimming="CharacterEllipsis" Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+                                                                    <TextBlock Text="{Binding DisplayName}" FontWeight="SemiBold" FontSize="14" Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
+                                                                    <TextBlock Text="{Binding TargetPath}" FontSize="12" Margin="0,2,0,0" TextTrimming="CharacterEllipsis" Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
                                                                 </StackPanel>
                                                                 <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
                                                                     <ui:ToggleSwitch IsChecked="{Binding IsEnabled, Mode=TwoWay}" Margin="0,0,8,0" Click="TglWinXItem_Click" Tag="{Binding}"/>
@@ -1318,7 +1329,7 @@
                                         </StackPanel>
 
                                         <StackPanel Grid.Column="3" Orientation="Horizontal" VerticalAlignment="Center">
-                                            <ui:Button Content="··· 更多 ▾" Appearance="Secondary" FontSize="11.5" Padding="10,4" ToolTip="处置操作与详情" Click="BtnMoreActions_Click" Tag="{Binding}">
+                                            <ui:Button Content="··· 更多 ▾" Appearance="Secondary" FontSize="12" Padding="10,4" ToolTip="处置操作与详情" Click="BtnMoreActions_Click" Tag="{Binding}">
                                                 <ui:Button.ContextMenu>
                                                     <ContextMenu>
                                                         <MenuItem Header="放行（启用/自动）" Click="MenuAuditApproveItem_Click" Tag="{Binding}"/>
@@ -1401,7 +1412,7 @@
                                     <RadioButton x:Name="RbRulesGroupByCategory" Content="按类型" Style="{StaticResource FluentPivotTabStyle}" GroupName="RulesGroupMode" IsChecked="True" Checked="RulesGroupMode_Checked" Tag="ByCategory"/>
                                     <RadioButton x:Name="RbRulesGroupByApp" Content="按应用" Style="{StaticResource FluentPivotTabStyle}" GroupName="RulesGroupMode" Checked="RulesGroupMode_Checked" Tag="ByApp"/>
                                 </StackPanel>
-                                <TextBlock x:Name="TxtLogsFilterSummary" Text="" FontSize="11.5" Foreground="{DynamicResource AccentTextFillColorPrimaryBrush}" VerticalAlignment="Center" Margin="0,0,10,0"/>
+                                <TextBlock x:Name="TxtLogsFilterSummary" Text="" FontSize="12" Foreground="{DynamicResource AccentTextFillColorPrimaryBrush}" VerticalAlignment="Center" Margin="0,0,10,0"/>
                                 <ui:Button x:Name="BtnToggleLogsFilter" Content="筛选" Icon="{ui:SymbolIcon Filter24}" Appearance="Secondary" Padding="12,5" Click="BtnToggleLogsFilter_Click"/>
                             </StackPanel>
                         </Grid>
@@ -1504,9 +1515,9 @@
                                                     <ColumnDefinition Width="*"/>
                                                     <ColumnDefinition Width="Auto"/>
                                                 </Grid.ColumnDefinitions>
-                                                <TextBlock Grid.Column="0" Text="{Binding HeaderTitle}" FontSize="13.5" FontWeight="SemiBold" Foreground="{DynamicResource TextFillColorPrimaryBrush}" VerticalAlignment="Center"/>
+                                                <TextBlock Grid.Column="0" Text="{Binding HeaderTitle}" FontSize="14" FontWeight="SemiBold" Foreground="{DynamicResource TextFillColorPrimaryBrush}" VerticalAlignment="Center"/>
                                                 <Border Grid.Column="1" Padding="8,2" CornerRadius="10" Background="{DynamicResource ControlFillColorSecondaryBrush}" Margin="10,0,0,0">
-                                                    <TextBlock Text="{Binding CountText}" FontSize="11.5" Foreground="{DynamicResource TextFillColorSecondaryBrush}" FontWeight="SemiBold"/>
+                                                    <TextBlock Text="{Binding CountText}" FontSize="12" Foreground="{DynamicResource TextFillColorSecondaryBrush}" FontWeight="SemiBold"/>
                                                 </Border>
                                             </Grid>
                                         </Expander.Header>
@@ -1552,7 +1563,7 @@
 
                                                             <!-- 右侧: 时间与 [手动处置 / 恢复状态] 按钮 -->
                                                             <StackPanel Grid.Column="2" VerticalAlignment="Center" HorizontalAlignment="Right">
-                                                                <TextBlock Text="{Binding EventTime, StringFormat='HH:mm:ss'}" FontSize="11.5" Foreground="{DynamicResource TextFillColorTertiaryBrush}" HorizontalAlignment="Right" Margin="0,0,0,6"/>
+                                                                <TextBlock Text="{Binding EventTime, StringFormat='HH:mm:ss'}" FontSize="12" Foreground="{DynamicResource TextFillColorTertiaryBrush}" HorizontalAlignment="Right" Margin="0,0,0,6"/>
                                                                 <ui:Button Content="{Binding LogActionButtonText}" Appearance="Primary" Icon="{ui:SymbolIcon ArrowUndo24}" Click="BtnUndoLog_Click" Tag="{Binding}" Visibility="{Binding CanUndo, Converter={StaticResource BooleanToVisibilityConverter}}"/>
                                                             </StackPanel>
                                                         </Grid>
@@ -1588,11 +1599,11 @@
                                                     </Grid>
                                                 </Border>
                                                 <StackPanel Grid.Column="1" VerticalAlignment="Center">
-                                                    <TextBlock Text="{Binding HeaderTitle}" FontSize="13.5" FontWeight="SemiBold" Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
+                                                    <TextBlock Text="{Binding HeaderTitle}" FontSize="14" FontWeight="SemiBold" Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
                                                     <TextBlock Text="{Binding Subtitle}" FontSize="11" Foreground="{DynamicResource TextFillColorSecondaryBrush}" Margin="0,1,0,0" TextTrimming="CharacterEllipsis"/>
                                                 </StackPanel>
                                                 <Border Grid.Column="2" Padding="8,2" CornerRadius="10" Background="{DynamicResource ControlFillColorSecondaryBrush}" VerticalAlignment="Center" Margin="10,0,0,0">
-                                                    <TextBlock Text="{Binding CountText}" FontSize="11.5" Foreground="{DynamicResource TextFillColorSecondaryBrush}" FontWeight="SemiBold"/>
+                                                    <TextBlock Text="{Binding CountText}" FontSize="12" Foreground="{DynamicResource TextFillColorSecondaryBrush}" FontWeight="SemiBold"/>
                                                 </Border>
                                             </Grid>
                                         </Expander.Header>
@@ -1624,7 +1635,7 @@
 
                                                                 <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="0,0,10,0">
                                                                     <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                                                                        <TextBlock Text="{Binding ShortTitle}" FontWeight="Bold" FontSize="13.5" Foreground="{DynamicResource TextFillColorPrimaryBrush}" VerticalAlignment="Center"/>
+                                                                        <TextBlock Text="{Binding ShortTitle}" FontWeight="Bold" FontSize="14" Foreground="{DynamicResource TextFillColorPrimaryBrush}" VerticalAlignment="Center"/>
                                                                         <Border Margin="8,0,0,0" Padding="5,1.5" CornerRadius="4" Background="{DynamicResource ControlFillColorDefaultBrush}">
                                                                             <TextBlock Text="{Binding Rule.CategoryName}" FontSize="11" Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
                                                                         </Border>
@@ -1635,11 +1646,11 @@
                                                                             <TextBlock Text="{Binding Rule.RuleModeText}" FontSize="11" Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
                                                                         </Border>
                                                                     </StackPanel>
-                                                                    <TextBlock Text="{Binding Rule.TargetBinaryOrCommand}" FontSize="11.5" Margin="0,3,0,0" Foreground="{DynamicResource TextFillColorSecondaryBrush}" TextTrimming="CharacterEllipsis"/>
+                                                                    <TextBlock Text="{Binding Rule.TargetBinaryOrCommand}" FontSize="12" Margin="0,3,0,0" Foreground="{DynamicResource TextFillColorSecondaryBrush}" TextTrimming="CharacterEllipsis"/>
                                                                 </StackPanel>
 
                                                                 <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
-                                                                    <ui:Button Content="{Binding DetailsToggleLabel}" Appearance="Transparent" FontSize="11.5" Padding="8,4" Margin="0,0,6,0" ToolTip="展开或收起规则详细特征" Click="BtnToggleRuleItemDetails_Click" Tag="{Binding}" />
+                                                                    <ui:Button Content="{Binding DetailsToggleLabel}" Appearance="Transparent" FontSize="12" Padding="8,4" Margin="0,0,6,0" ToolTip="展开或收起规则详细特征" Click="BtnToggleRuleItemDetails_Click" Tag="{Binding}" />
                                                                     <ui:Button Icon="{ui:SymbolIcon Edit24}" Content="编辑" Appearance="Secondary" Margin="0,0,6,0" Click="BtnEditRule_Click" Tag="{Binding}" />
                                                                     <ui:Button Icon="{ui:SymbolIcon Delete24}" Appearance="Transparent" ToolTip="删除此条规则" Click="BtnDeleteRule_Click" Tag="{Binding}" />
                                                                 </StackPanel>
@@ -1656,11 +1667,11 @@
                                                                             <ColumnDefinition Width="*"/>
                                                                             <ColumnDefinition Width="Auto"/>
                                                                         </Grid.ColumnDefinitions>
-                                                                        <TextBlock Grid.Column="0" Text="命令 / 路径" FontSize="11.5" FontWeight="SemiBold" Foreground="{DynamicResource TextFillColorSecondaryBrush}" VerticalAlignment="Center"/>
+                                                                        <TextBlock Grid.Column="0" Text="命令 / 路径" FontSize="12" FontWeight="SemiBold" Foreground="{DynamicResource TextFillColorSecondaryBrush}" VerticalAlignment="Center"/>
                                                                         <ui:TextBox Grid.Column="1" Text="{Binding Rule.TargetBinaryOrCommand, Mode=OneWay}" IsReadOnly="True"
-                                                                                    FontSize="11.5" Padding="8,5" Margin="0,0,8,0" VerticalAlignment="Center"/>
+                                                                                    FontSize="12" Padding="8,5" Margin="0,0,8,0" VerticalAlignment="Center"/>
                                                                         <ui:Button Grid.Column="2" Content="打开" Appearance="Secondary" Icon="{ui:SymbolIcon FolderOpen20}"
-                                                                                   FontSize="11.5" Padding="10,5" Click="BtnRuleOpenFile_Click" Tag="{Binding}"/>
+                                                                                   FontSize="12" Padding="10,5" Click="BtnRuleOpenFile_Click" Tag="{Binding}"/>
                                                                     </Grid>
 
                                                                     <Grid Margin="0,0,0,8">
@@ -1669,11 +1680,11 @@
                                                                             <ColumnDefinition Width="*"/>
                                                                             <ColumnDefinition Width="Auto"/>
                                                                         </Grid.ColumnDefinitions>
-                                                                        <TextBlock Grid.Column="0" Text="注册表位置" FontSize="11.5" FontWeight="SemiBold" Foreground="{DynamicResource TextFillColorSecondaryBrush}" VerticalAlignment="Center"/>
+                                                                        <TextBlock Grid.Column="0" Text="注册表位置" FontSize="12" FontWeight="SemiBold" Foreground="{DynamicResource TextFillColorSecondaryBrush}" VerticalAlignment="Center"/>
                                                                         <ui:TextBox Grid.Column="1" Text="{Binding Rule.DisplayLocationKey, Mode=OneWay}" IsReadOnly="True"
-                                                                                    FontSize="11.5" Padding="8,5" Margin="0,0,8,0" VerticalAlignment="Center"/>
+                                                                                    FontSize="12" Padding="8,5" Margin="0,0,8,0" VerticalAlignment="Center"/>
                                                                         <ui:Button Grid.Column="2" Content="定位" Appearance="Secondary" Icon="{ui:SymbolIcon Search20}"
-                                                                                   FontSize="11.5" Padding="10,5" Click="BtnRuleOpenLocation_Click" Tag="{Binding}"/>
+                                                                                   FontSize="12" Padding="10,5" Click="BtnRuleOpenLocation_Click" Tag="{Binding}"/>
                                                                     </Grid>
 
                                                                     <Grid Margin="0,0,0,8">
@@ -1682,7 +1693,7 @@
                                                                             <ColumnDefinition Width="*"/>
                                                                             <ColumnDefinition Width="Auto"/>
                                                                         </Grid.ColumnDefinitions>
-                                                                        <TextBlock Grid.Column="0" Text="签名 / 哈希" FontSize="11.5" FontWeight="SemiBold" Foreground="{DynamicResource TextFillColorSecondaryBrush}" VerticalAlignment="Center"/>
+                                                                        <TextBlock Grid.Column="0" Text="签名 / 哈希" FontSize="12" FontWeight="SemiBold" Foreground="{DynamicResource TextFillColorSecondaryBrush}" VerticalAlignment="Center"/>
                                                                         <TextBox Grid.Column="1" Text="{Binding Rule.PublisherDisplay, Mode=OneWay, StringFormat='发布者: {0}'}" IsReadOnly="True"
                                                                                  BorderThickness="0" Background="Transparent" FontSize="11" Foreground="{DynamicResource TextFillColorSecondaryBrush}"
                                                                                  Padding="0" Margin="0,0,12,0" VerticalAlignment="Center"/>
@@ -1699,9 +1710,9 @@
                                                                         <TextBlock Grid.Column="0" Text="{Binding Rule.LastUpdatedLocal, StringFormat='最后更新: {0:yyyy-MM-dd HH:mm}'}"
                                                                                    FontSize="11" Foreground="{DynamicResource TextFillColorTertiaryBrush}" VerticalAlignment="Center"/>
                                                                         <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
-                                                                            <ui:Button Content="查看详情" Appearance="Secondary" Icon="{ui:SymbolIcon Info24}" FontSize="11.5" Padding="9,4" Margin="0,0,6,0" Click="BtnRuleViewDetail_Click" Tag="{Binding}"/>
-                                                                            <ui:Button Content="复制 AI 提示词" Appearance="Secondary" Icon="{ui:SymbolIcon Copy20}" FontSize="11.5" Padding="9,4" Margin="0,0,6,0" Click="BtnRuleCopyAiPrompt_Click" Tag="{Binding}"/>
-                                                                            <ui:Button Content="联网搜索" Appearance="Secondary" Icon="{ui:SymbolIcon Search20}" FontSize="11.5" Padding="9,4" Click="BtnRuleSearchWeb_Click" Tag="{Binding}"/>
+                                                                            <ui:Button Content="查看详情" Appearance="Secondary" Icon="{ui:SymbolIcon Info24}" FontSize="12" Padding="9,4" Margin="0,0,6,0" Click="BtnRuleViewDetail_Click" Tag="{Binding}"/>
+                                                                            <ui:Button Content="复制 AI 提示词" Appearance="Secondary" Icon="{ui:SymbolIcon Copy20}" FontSize="12" Padding="9,4" Margin="0,0,6,0" Click="BtnRuleCopyAiPrompt_Click" Tag="{Binding}"/>
+                                                                            <ui:Button Content="联网搜索" Appearance="Secondary" Icon="{ui:SymbolIcon Search20}" FontSize="12" Padding="9,4" Click="BtnRuleSearchWeb_Click" Tag="{Binding}"/>
                                                                         </StackPanel>
                                                                     </Grid>
                                                                 </StackPanel>
@@ -1734,7 +1745,7 @@
                                     </Grid.ColumnDefinitions>
                                     <ui:SymbolIcon Grid.Column="0" Symbol="Color24" FontSize="20" Margin="0,0,14,0" Foreground="{DynamicResource AccentTextFillColorPrimaryBrush}" VerticalAlignment="Center"/>
                                     <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="0,0,16,0">
-                                        <TextBlock Text="外观主题" FontWeight="SemiBold" FontSize="13.5" Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
+                                        <TextBlock Text="外观主题" FontWeight="SemiBold" FontSize="14" Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
                                     </StackPanel>
                                     <ComboBox Grid.Column="2" x:Name="CmbTheme" HorizontalAlignment="Stretch" SelectionChanged="CmbTheme_SelectionChanged">
                                         <ComboBoxItem Content="跟随系统" Tag="System"/>
@@ -1754,8 +1765,8 @@
                                     </Grid.ColumnDefinitions>
                                     <ui:SymbolIcon Grid.Column="0" Symbol="Shield24" FontSize="20" Margin="0,0,14,0" Foreground="#009688" VerticalAlignment="Center"/>
                                     <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="0,0,16,0">
-                                        <TextBlock Text="右键菜单处理方式" FontWeight="SemiBold" FontSize="13.5" Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
-                                        <TextBlock Text="新注册右键菜单项的默认处理方式" FontSize="11.5" Foreground="{DynamicResource TextFillColorSecondaryBrush}" Margin="0,3,0,0" TextWrapping="Wrap"/>
+                                        <TextBlock Text="右键菜单处理方式" FontWeight="SemiBold" FontSize="14" Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
+                                        <TextBlock Text="新注册右键菜单项的默认处理方式" FontSize="12" Foreground="{DynamicResource TextFillColorSecondaryBrush}" Margin="0,3,0,0" TextWrapping="Wrap"/>
                                     </StackPanel>
                                     <ComboBox Grid.Column="2" x:Name="CmbContextMenuStrategy" HorizontalAlignment="Stretch" SelectionChanged="CmbContextMenuStrategy_SelectionChanged">
                                         <ComboBoxItem Content="先拦截后审核" Tag="InterceptAndAudit"/>
@@ -1774,8 +1785,8 @@
                                     </Grid.ColumnDefinitions>
                                     <ui:SymbolIcon Grid.Column="0" Symbol="Games24" FontSize="20" Margin="0,0,14,0" Foreground="#FFB900" VerticalAlignment="Center"/>
                                     <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="0,0,16,0">
-                                        <TextBlock Text="全屏游戏免打扰" FontWeight="SemiBold" FontSize="13.5" Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
-                                        <TextBlock Text="全屏运行游戏时暂存弹窗，退出后统一提示" FontSize="11.5" Foreground="{DynamicResource TextFillColorSecondaryBrush}" Margin="0,3,0,0" TextWrapping="Wrap"/>
+                                        <TextBlock Text="全屏游戏免打扰" FontWeight="SemiBold" FontSize="14" Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
+                                        <TextBlock Text="全屏运行游戏时暂存弹窗，退出后统一提示" FontSize="12" Foreground="{DynamicResource TextFillColorSecondaryBrush}" Margin="0,3,0,0" TextWrapping="Wrap"/>
                                     </StackPanel>
                                     <ui:ToggleSwitch Grid.Column="2" x:Name="ToggleAutoGameMode" Content="启用" IsChecked="True" Click="ToggleAutoGameMode_Click" HorizontalAlignment="Right" VerticalAlignment="Center"/>
                                 </Grid>
@@ -1794,13 +1805,13 @@
                                         <ui:SymbolIcon Grid.Column="0" Symbol="Alert24" FontSize="20" Margin="0,0,14,0" Foreground="#0078D4" VerticalAlignment="Center"/>
                                         <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="0,0,12,0">
                                             <TextBlock Text="通知中心" FontWeight="SemiBold" FontSize="14" Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
-                                            <TextBlock Text="统一管理规则命中与右键菜单拦截的桌面系统通知提醒" FontSize="11.5" Foreground="{DynamicResource TextFillColorSecondaryBrush}" Margin="0,2,0,0" TextWrapping="Wrap"/>
+                                            <TextBlock Text="统一管理规则命中与右键菜单拦截的桌面系统通知提醒" FontSize="12" Foreground="{DynamicResource TextFillColorSecondaryBrush}" Margin="0,2,0,0" TextWrapping="Wrap"/>
                                         </StackPanel>
                                         <ui:Button Grid.Column="2" x:Name="BtnSystemNotifyWarning"
                                                    Content="⚠ 系统通知未开启（点击开启）"
                                                    Appearance="Transparent"
                                                    Foreground="#C42B1C"
-                                                   FontSize="11.5"
+                                                   FontSize="12"
                                                    Padding="8,4"
                                                    Margin="0,0,8,0"
                                                    VerticalAlignment="Center"
@@ -1814,7 +1825,13 @@
                                         </ui:SymbolIcon>
                                     </Grid>
 
-                                    <Border x:Name="NotificationsDetailsContainer" ClipToBounds="True" Visibility="Collapsed">
+                                    <Border x:Name="NotificationsDetailsContainer" ClipToBounds="True" Visibility="Collapsed" Opacity="0">
+                                        <Border.LayoutTransform>
+                                            <ScaleTransform x:Name="ScaleNotificationsDetails" ScaleX="1" ScaleY="0"/>
+                                        </Border.LayoutTransform>
+                                        <Border.RenderTransform>
+                                            <TranslateTransform x:Name="TranslateNotificationsDetails" Y="-8"/>
+                                        </Border.RenderTransform>
                                         <StackPanel>
                                             <Rectangle Height="1" Fill="{DynamicResource ControlStrokeColorDefaultBrush}" Margin="0,10,0,12"/>
 
@@ -1826,8 +1843,8 @@
                                                 </Grid.ColumnDefinitions>
                                                 <ui:SymbolIcon Grid.Column="0" Symbol="Alert24" FontSize="18" Margin="4,0,14,0" Foreground="#0078D4" VerticalAlignment="Center"/>
                                                 <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="0,0,16,0">
-                                                    <TextBlock Text="命中规则拦截通知" FontWeight="SemiBold" FontSize="13.5" Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
-                                                    <TextBlock Text="自动命中持久化拦截规则并执行处置时弹出系统通知" FontSize="11.5" Foreground="{DynamicResource TextFillColorSecondaryBrush}" Margin="0,3,0,0" TextWrapping="Wrap"/>
+                                                    <TextBlock Text="命中规则拦截通知" FontWeight="SemiBold" FontSize="14" Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
+                                                    <TextBlock Text="自动命中持久化拦截规则并执行处置时弹出系统通知" FontSize="12" Foreground="{DynamicResource TextFillColorSecondaryBrush}" Margin="0,3,0,0" TextWrapping="Wrap"/>
                                                 </StackPanel>
                                                 <ui:ToggleSwitch Grid.Column="2" x:Name="ToggleRuleHitNotification" IsChecked="True" Click="ToggleNotificationSetting_Click" HorizontalAlignment="Right" VerticalAlignment="Center"/>
                                             </Grid>
@@ -1842,8 +1859,8 @@
                                                 </Grid.ColumnDefinitions>
                                                 <ui:SymbolIcon Grid.Column="0" Symbol="AppsListDetail24" FontSize="18" Margin="4,0,14,0" Foreground="#8764B8" VerticalAlignment="Center"/>
                                                 <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="0,0,16,0">
-                                                    <TextBlock Text="右键菜单静默拦截通知" FontWeight="SemiBold" FontSize="13.5" Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
-                                                    <TextBlock x:Name="TxtCtxNotifyHint" Text="先拦截后审核模式下屏蔽新右键菜单时弹出系统通知（弹窗审核模式自动禁用）" FontSize="11.5" Foreground="{DynamicResource TextFillColorSecondaryBrush}" Margin="0,3,0,0" TextWrapping="Wrap"/>
+                                                    <TextBlock Text="右键菜单静默拦截通知" FontWeight="SemiBold" FontSize="14" Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
+                                                    <TextBlock x:Name="TxtCtxNotifyHint" Text="先拦截后审核模式下屏蔽新右键菜单时弹出系统通知（弹窗审核模式自动禁用）" FontSize="12" Foreground="{DynamicResource TextFillColorSecondaryBrush}" Margin="0,3,0,0" TextWrapping="Wrap"/>
                                                 </StackPanel>
                                                 <ui:ToggleSwitch Grid.Column="2" x:Name="ToggleContextMenuNotification" IsChecked="True" Click="ToggleNotificationSetting_Click" HorizontalAlignment="Right" VerticalAlignment="Center"/>
                                             </Grid>
@@ -1864,7 +1881,7 @@
                                         <ui:SymbolIcon Grid.Column="0" Symbol="Broom24" FontSize="20" Margin="0,0,14,0" Foreground="#8764B8" VerticalAlignment="Center"/>
                                         <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="0,0,12,0">
                                             <TextBlock Text="清理与维护中心" FontWeight="SemiBold" FontSize="14" Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
-                                            <TextBlock Text="集中配置日志自动裁剪、单版本规则定时校验与数据缓存立即清理" FontSize="11.5" Foreground="{DynamicResource TextFillColorSecondaryBrush}" Margin="0,2,0,0" TextWrapping="Wrap"/>
+                                            <TextBlock Text="集中配置日志自动裁剪、单版本规则定时校验与数据缓存立即清理" FontSize="12" Foreground="{DynamicResource TextFillColorSecondaryBrush}" Margin="0,2,0,0" TextWrapping="Wrap"/>
                                         </StackPanel>
                                         <ui:SymbolIcon Grid.Column="2" Symbol="ChevronDown24" FontSize="18" Foreground="{DynamicResource TextFillColorSecondaryBrush}" VerticalAlignment="Center" Margin="6,0" RenderTransformOrigin="0.5,0.5">
                                             <ui:SymbolIcon.RenderTransform>
@@ -1873,7 +1890,13 @@
                                         </ui:SymbolIcon>
                                     </Grid>
 
-                                    <Border x:Name="CleanupDetailsContainer" ClipToBounds="True" Visibility="Visible">
+                                    <Border x:Name="CleanupDetailsContainer" ClipToBounds="True" Visibility="Visible" Opacity="1">
+                                        <Border.LayoutTransform>
+                                            <ScaleTransform x:Name="ScaleCleanupDetails" ScaleX="1" ScaleY="1"/>
+                                        </Border.LayoutTransform>
+                                        <Border.RenderTransform>
+                                            <TranslateTransform x:Name="TranslateCleanupDetails" Y="0"/>
+                                        </Border.RenderTransform>
                                         <StackPanel>
                                             <Rectangle Height="1" Fill="{DynamicResource ControlStrokeColorDefaultBrush}" Margin="0,8,0,12"/>
 
@@ -1890,19 +1913,19 @@
                                                     </Grid.ColumnDefinitions>
                                                     <StackPanel Grid.Column="0" VerticalAlignment="Center" Margin="0,0,16,0">
                                                         <TextBlock Text="自动清理历史日志" FontWeight="SemiBold" FontSize="13" Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
-                                                        <TextBlock Text="开启后按设定保留天数或最大条数上限自动裁剪历史事件记录" FontSize="11.5" Foreground="{DynamicResource TextFillColorSecondaryBrush}" Margin="0,2,0,0" TextWrapping="Wrap"/>
+                                                        <TextBlock Text="开启后按设定保留天数或最大条数上限自动裁剪历史事件记录" FontSize="12" Foreground="{DynamicResource TextFillColorSecondaryBrush}" Margin="0,2,0,0" TextWrapping="Wrap"/>
                                                     </StackPanel>
                                                     <ui:ToggleSwitch Grid.Column="1" x:Name="TglLogAutoPrune" IsChecked="True" Click="TglLogAutoPrune_Click" HorizontalAlignment="Right" VerticalAlignment="Center"/>
                                                 </Grid>
 
                                                 <WrapPanel Grid.Row="1" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,10,0,0">
-                                                    <TextBlock Text="保留天数:" VerticalAlignment="Center" Margin="0,0,8,0" FontSize="12.5" Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
+                                                    <TextBlock Text="保留天数:" VerticalAlignment="Center" Margin="0,0,8,0" FontSize="13" Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
                                                     <ui:NumberBox x:Name="NumLogRetentionDays" Width="135" Minimum="1" Maximum="3650" SmallChange="1" LargeChange="10"
                                                                   MaxDecimalPlaces="0" SpinButtonPlacementMode="Inline" ClearButtonEnabled="False" Value="30"
                                                                   Margin="0,0,6,0" ValueChanged="NumLogRetention_ValueChanged"/>
                                                     <TextBlock Text="天" VerticalAlignment="Center" Margin="0,0,22,0" FontSize="12" Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
 
-                                                    <TextBlock Text="最大条数:" VerticalAlignment="Center" Margin="0,0,8,0" FontSize="12.5" Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
+                                                    <TextBlock Text="最大条数:" VerticalAlignment="Center" Margin="0,0,8,0" FontSize="13" Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
                                                     <ui:NumberBox x:Name="NumLogMaxCount" Width="150" Minimum="0" Maximum="100000" SmallChange="100" LargeChange="500"
                                                                   MaxDecimalPlaces="0" SpinButtonPlacementMode="Inline" ClearButtonEnabled="False" Value="1000"
                                                                   Margin="0,0,6,0" ValueChanged="NumLogRetention_ValueChanged"/>
@@ -1925,19 +1948,19 @@
                                                     </Grid.ColumnDefinitions>
                                                     <StackPanel Grid.Column="0" VerticalAlignment="Center" Margin="0,0,16,0">
                                                         <TextBlock Text="单版本规则定时校验" FontWeight="SemiBold" FontSize="13" Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
-                                                        <TextBlock Text="定期核对单版本规则对应的程序文件哈希，升级更新后自动失效清理" FontSize="11.5" Foreground="{DynamicResource TextFillColorSecondaryBrush}" Margin="0,2,0,0" TextWrapping="Wrap"/>
+                                                        <TextBlock Text="定期核对单版本规则对应的程序文件哈希，升级更新后自动失效清理" FontSize="12" Foreground="{DynamicResource TextFillColorSecondaryBrush}" Margin="0,2,0,0" TextWrapping="Wrap"/>
                                                     </StackPanel>
                                                     <ui:ToggleSwitch Grid.Column="1" x:Name="TglMd5Validation" IsChecked="True" Click="TglMd5Validation_Click" HorizontalAlignment="Right" VerticalAlignment="Center"/>
                                                 </Grid>
 
                                                 <WrapPanel Grid.Row="1" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,10,0,0">
-                                                    <TextBlock Text="检查间隔:" VerticalAlignment="Center" Margin="0,0,8,0" FontSize="12.5" Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
+                                                    <TextBlock Text="检查间隔:" VerticalAlignment="Center" Margin="0,0,8,0" FontSize="13" Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
                                                     <ui:NumberBox x:Name="NumMd5ValidationDays" Width="125" Minimum="1" Maximum="360" SmallChange="1" LargeChange="7"
                                                                   MaxDecimalPlaces="0" SpinButtonPlacementMode="Inline" ClearButtonEnabled="False" Value="3"
                                                                   Margin="0,0,6,0" ValueChanged="NumMd5ValidationDays_ValueChanged"/>
                                                     <TextBlock Text="天 (1–360)" VerticalAlignment="Center" Margin="0,0,22,0" FontSize="12" Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
 
-                                                    <CheckBox x:Name="ChkMd5ValidationIdleOnly" Content="仅在电脑空闲时检查" IsChecked="True" MinWidth="0" VerticalAlignment="Center" Click="ChkMd5ValidationIdleOnly_Click" FontSize="12.5"/>
+                                                    <CheckBox x:Name="ChkMd5ValidationIdleOnly" Content="仅在电脑空闲时检查" IsChecked="True" MinWidth="0" VerticalAlignment="Center" Click="ChkMd5ValidationIdleOnly_Click" FontSize="13"/>
                                                 </WrapPanel>
                                             </Grid>
 
@@ -1956,7 +1979,7 @@
                                                     </Grid.ColumnDefinitions>
                                                     <StackPanel Grid.Column="0" VerticalAlignment="Center" Margin="0,0,16,0">
                                                         <TextBlock Text="立即清理日志与缓存" FontWeight="SemiBold" FontSize="13" Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
-                                                        <TextBlock Text="按勾选范围立即清空全部历史拦截日志、移除失效规则、清理运行缓存并压缩数据库" FontSize="11.5" Foreground="{DynamicResource TextFillColorSecondaryBrush}" Margin="0,2,0,0" TextWrapping="Wrap"/>
+                                                        <TextBlock Text="按勾选范围立即清空全部历史拦截日志、移除失效规则、清理运行缓存并压缩数据库" FontSize="12" Foreground="{DynamicResource TextFillColorSecondaryBrush}" Margin="0,2,0,0" TextWrapping="Wrap"/>
                                                     </StackPanel>
                                                     <ui:Button Grid.Column="1" x:Name="BtnUnifiedCleanup" Content="立即清理" Appearance="Primary" Icon="{ui:SymbolIcon Broom24}" Click="BtnUnifiedCleanup_Click" VerticalAlignment="Center"/>
                                                 </Grid>
@@ -2094,8 +2117,8 @@
                                         </Grid.ColumnDefinitions>
                                         <ui:SymbolIcon Grid.Column="0" Symbol="DocumentBulletList24" FontSize="20" Margin="0,0,14,0" Foreground="#0078D4" VerticalAlignment="Center"/>
                                         <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="0,0,16,0">
-                                            <TextBlock Text="运行日志" FontWeight="SemiBold" FontSize="13.5" Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
-                                            <TextBlock Text="将后台监控与拦截处理记录写入本地日志文件，便于状态追踪" FontSize="11.5" Foreground="{DynamicResource TextFillColorSecondaryBrush}" Margin="0,3,0,0" TextWrapping="Wrap"/>
+                                            <TextBlock Text="运行日志" FontWeight="SemiBold" FontSize="14" Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
+                                            <TextBlock Text="将后台监控与拦截处理记录写入本地日志文件，便于状态追踪" FontSize="12" Foreground="{DynamicResource TextFillColorSecondaryBrush}" Margin="0,3,0,0" TextWrapping="Wrap"/>
                                         </StackPanel>
                                         <ui:ToggleSwitch Grid.Column="2" x:Name="TglDiagnosticLogging" IsChecked="False" Click="TglDiagnosticLogging_Click" VerticalAlignment="Center"/>
                                     </Grid>
@@ -2142,7 +2165,7 @@
                                                 </Grid.ColumnDefinitions>
                                                 <StackPanel Grid.Column="0" VerticalAlignment="Center" Margin="0,0,16,0">
                                                     <TextBlock Text="托盘常驻 (StartupGuardTray)" FontWeight="SemiBold" FontSize="13" Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
-                                                    <TextBlock Text="登录系统时自动启动托盘与弹窗守护进程" FontSize="11.5" Foreground="{DynamicResource TextFillColorSecondaryBrush}" Margin="0,2,0,0" TextWrapping="Wrap"/>
+                                                    <TextBlock Text="登录系统时自动启动托盘与弹窗守护进程" FontSize="12" Foreground="{DynamicResource TextFillColorSecondaryBrush}" Margin="0,2,0,0" TextWrapping="Wrap"/>
                                                 </StackPanel>
                                                 <ui:ToggleSwitch Grid.Column="1" x:Name="TglTrayAutoStart" IsChecked="False" Click="TglTrayAutoStart_Click" VerticalAlignment="Center" ToolTip="控制托盘常驻与弹窗守护进程是否随系统启动"/>
                                             </Grid>
@@ -2158,7 +2181,7 @@
                                                     <TextBlock Text="后台监控服务 (StartupGuardService)" FontWeight="SemiBold" FontSize="13" Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
                                                     <StackPanel Orientation="Horizontal" Margin="0,2,0,0">
                                                         <TextBlock x:Name="TxtServiceStatusDot" Text="● " FontSize="12" Foreground="#107C10" VerticalAlignment="Center"/>
-                                                        <TextBlock x:Name="TxtServiceStatusText" Text="运行中" FontSize="11.5" Foreground="{DynamicResource TextFillColorSecondaryBrush}" VerticalAlignment="Center"/>
+                                                        <TextBlock x:Name="TxtServiceStatusText" Text="运行中" FontSize="12" Foreground="{DynamicResource TextFillColorSecondaryBrush}" VerticalAlignment="Center"/>
                                                     </StackPanel>
                                                 </StackPanel>
                                                 <ui:ToggleSwitch Grid.Column="1" x:Name="TglServiceAutoStart" IsChecked="False" Click="TglServiceAutoStart_Click" VerticalAlignment="Center" ToolTip="控制后台监控服务是否随系统启动（非启停开关）"/>
@@ -2191,10 +2214,10 @@
                                             <ui:SymbolIcon Symbol="ShieldCheckmark24" Foreground="White" FontSize="22" HorizontalAlignment="Center" VerticalAlignment="Center"/>
                                         </Border>
                                         <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="0,0,16,0">
-                                            <TextBlock Text="StartupGuard" FontWeight="Bold" FontSize="14.5" Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
+                                            <TextBlock Text="StartupGuard" FontWeight="Bold" FontSize="14" Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
                                             <StackPanel Orientation="Horizontal" Margin="0,3,0,0" VerticalAlignment="Center">
-                                                <TextBlock Text="Windows 启动项与右键菜单管理 · 作者：" FontSize="11.5" Foreground="{DynamicResource TextFillColorSecondaryBrush}" VerticalAlignment="Center"/>
-                                                <Button Style="{StaticResource StoreLinkButtonStyle}" Content="@PhoebeCLS" Padding="2,0" Margin="0" FontSize="11.5" FontWeight="SemiBold"
+                                                <TextBlock Text="Windows 启动项与右键菜单管理 · 作者：" FontSize="12" Foreground="{DynamicResource TextFillColorSecondaryBrush}" VerticalAlignment="Center"/>
+                                                <Button Style="{StaticResource StoreLinkButtonStyle}" Content="@PhoebeCLS" Padding="2,0" Margin="0" FontSize="12" FontWeight="SemiBold"
                                                         Tag="https://github.com/PhoebeCLS" ToolTip="访问 @PhoebeCLS 的 GitHub 主页" Click="BtnStoreLink_Click" VerticalAlignment="Center"/>
                                             </StackPanel>
                                         </StackPanel>
@@ -2253,32 +2276,32 @@
                                             </Grid.RowDefinitions>
                                             <StackPanel Grid.Row="0" Grid.Column="0" Margin="0,0,10,0">
                                                 <Button Style="{StaticResource StoreLinkButtonStyle}" Content="WPF-UI (MIT)" FontWeight="SemiBold" Margin="0,0,0,1" Tag="https://github.com/lepoco/wpfui" Click="BtnStoreLink_Click"/>
-                                                <TextBlock Text="现代化 WinUI 3 Fluent 控件库与 Mica 背景支持" FontSize="10.5" Foreground="{DynamicResource TextFillColorTertiaryBrush}" TextWrapping="Wrap" Margin="0,1,0,8"/>
+                                                <TextBlock Text="现代化 WinUI 3 Fluent 控件库与 Mica 背景支持" FontSize="11" Foreground="{DynamicResource TextFillColorTertiaryBrush}" TextWrapping="Wrap" Margin="0,1,0,8"/>
                                             </StackPanel>
 
                                             <StackPanel Grid.Row="0" Grid.Column="1" Margin="0,0,10,0">
                                                 <Button Style="{StaticResource StoreLinkButtonStyle}" Content="ContextMenuMgr (GPL-3.0)" FontWeight="SemiBold" Margin="0,0,0,1" Tag="https://github.com/PLFJY/ContextMenuMgr" Click="BtnStoreLink_Click"/>
-                                                <TextBlock Text="重点致谢：Windows 经典与 Win11 现代外壳菜单架构及先拦截设计参考" FontSize="10.5" Foreground="{DynamicResource TextFillColorTertiaryBrush}" TextWrapping="Wrap" Margin="0,1,0,8"/>
+                                                <TextBlock Text="重点致谢：Windows 经典与 Win11 现代外壳菜单架构及先拦截设计参考" FontSize="11" Foreground="{DynamicResource TextFillColorTertiaryBrush}" TextWrapping="Wrap" Margin="0,1,0,8"/>
                                             </StackPanel>
 
                                             <StackPanel Grid.Row="0" Grid.Column="2">
                                                 <Button Style="{StaticResource StoreLinkButtonStyle}" Content="Microsoft.Data.Sqlite (MIT)" FontWeight="SemiBold" Margin="0,0,0,1" Tag="https://github.com/dotnet/efcore" Click="BtnStoreLink_Click"/>
-                                                <TextBlock Text=".NET SQLite 数据访问驱动 (底层 SQLite 引擎为 Public Domain)" FontSize="10.5" Foreground="{DynamicResource TextFillColorTertiaryBrush}" TextWrapping="Wrap" Margin="0,1,0,8"/>
+                                                <TextBlock Text=".NET SQLite 数据访问驱动 (底层 SQLite 引擎为 Public Domain)" FontSize="11" Foreground="{DynamicResource TextFillColorTertiaryBrush}" TextWrapping="Wrap" Margin="0,1,0,8"/>
                                             </StackPanel>
 
                                             <StackPanel Grid.Row="1" Grid.Column="0" Margin="0,0,10,0">
                                                 <Button Style="{StaticResource StoreLinkButtonStyle}" Content="ContextMenuManager (GPL-3.0)" FontWeight="SemiBold" Margin="0,0,0,1" Tag="https://github.com/BluePointLilac/ContextMenuManager" Click="BtnStoreLink_Click"/>
-                                                <TextBlock Text="ContextMenuMgr 上游经典注册表规则与 GUID 解析开源基石" FontSize="10.5" Foreground="{DynamicResource TextFillColorTertiaryBrush}" TextWrapping="Wrap" Margin="0,1,0,4"/>
+                                                <TextBlock Text="ContextMenuMgr 上游经典注册表规则与 GUID 解析开源基石" FontSize="11" Foreground="{DynamicResource TextFillColorTertiaryBrush}" TextWrapping="Wrap" Margin="0,1,0,4"/>
                                             </StackPanel>
 
                                             <StackPanel Grid.Row="1" Grid.Column="1" Margin="0,0,10,0">
                                                 <Button Style="{StaticResource StoreLinkButtonStyle}" Content="Win11 Context Menu Mgr (MIT)" FontWeight="SemiBold" Margin="0,0,0,1" Tag="https://github.com/branhill/windows-11-context-menu-manager" Click="BtnStoreLink_Click"/>
-                                                <TextBlock Text="ContextMenuMgr 致谢项目：Windows 11 PackagedCom 现代右键管理参考" FontSize="10.5" Foreground="{DynamicResource TextFillColorTertiaryBrush}" TextWrapping="Wrap" Margin="0,1,0,4"/>
+                                                <TextBlock Text="ContextMenuMgr 致谢项目：Windows 11 PackagedCom 现代右键管理参考" FontSize="11" Foreground="{DynamicResource TextFillColorTertiaryBrush}" TextWrapping="Wrap" Margin="0,1,0,4"/>
                                             </StackPanel>
 
                                             <StackPanel Grid.Row="1" Grid.Column="2">
                                                 <Button Style="{StaticResource StoreLinkButtonStyle}" Content="UI.WPF.Modern" FontWeight="SemiBold" Margin="0,0,0,1" Tag="https://github.com/iNKORE-NET/UI.WPF.Modern" Click="BtnStoreLink_Click"/>
-                                                <TextBlock Text="ContextMenuMgr 致谢项目：WPF Fluent UI 现代化界面样式参考" FontSize="10.5" Foreground="{DynamicResource TextFillColorTertiaryBrush}" TextWrapping="Wrap" Margin="0,1,0,4"/>
+                                                <TextBlock Text="ContextMenuMgr 致谢项目：WPF Fluent UI 现代化界面样式参考" FontSize="11" Foreground="{DynamicResource TextFillColorTertiaryBrush}" TextWrapping="Wrap" Margin="0,1,0,4"/>
                                             </StackPanel>
                                         </Grid>
                                     </StackPanel>
@@ -2375,7 +2398,7 @@
 
                         <TextBlock x:Name="TxtGlobalSearchEmpty" Grid.Row="1"
                                    Text="未找到匹配项目，可尝试搜索名称、路径、发布者、服务名、CLSID 或调整分类筛选"
-                                   FontSize="12.5" Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                                   FontSize="13" Foreground="{DynamicResource TextFillColorSecondaryBrush}"
                                    HorizontalAlignment="Center" Margin="0,36,0,36" Visibility="Collapsed"/>
 
                         <ListView x:Name="ListViewGlobalSearch" Grid.Row="1" BorderThickness="0" Background="Transparent"
@@ -2424,7 +2447,7 @@
 
                                             <StackPanel Grid.Column="1" Margin="12,0,12,0" VerticalAlignment="Center">
                                                 <WrapPanel Orientation="Horizontal" VerticalAlignment="Center">
-                                                    <TextBlock Text="{Binding DisplayName}" FontWeight="Bold" FontSize="13.5"
+                                                    <TextBlock Text="{Binding DisplayName}" FontWeight="Bold" FontSize="14"
                                                                Foreground="{DynamicResource TextFillColorPrimaryBrush}" VerticalAlignment="Center"/>
                                                     <Border Margin="8,0,0,0" Padding="6,1.5" CornerRadius="4" Background="#1A0078D4" VerticalAlignment="Center">
                                                         <TextBlock Text="{Binding GlobalSearchTypeLabel}" FontSize="11" FontWeight="SemiBold" Foreground="#0078D4"/>
@@ -2434,16 +2457,16 @@
                                                     </Border>
                                                     <Border Margin="6,0,0,0" Padding="5,1.5" CornerRadius="4" Background="{DynamicResource ControlFillColorDefaultBrush}" VerticalAlignment="Center"
                                                             Visibility="{Binding IsMicrosoftOrSystemBuiltIn, Converter={StaticResource BooleanToVisibilityConverter}}">
-                                                        <TextBlock Text="系统项" FontSize="10.5" Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+                                                        <TextBlock Text="系统项" FontSize="11" Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
                                                     </Border>
                                                 </WrapPanel>
 
-                                                <TextBlock Text="{Binding CommandOrPath}" FontSize="11.5" Margin="0,3,0,0"
+                                                <TextBlock Text="{Binding CommandOrPath}" FontSize="12" Margin="0,3,0,0"
                                                            TextTrimming="CharacterEllipsis" Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
 
                                                 <StackPanel Orientation="Horizontal" Margin="0,2,0,0">
                                                     <TextBlock Text="{Binding StatusSummary}" FontSize="11" FontWeight="SemiBold" Foreground="#0078D4" Margin="0,0,10,0"/>
-                                                    <TextBlock Text="{Binding LocationKey}" FontSize="10.5" Foreground="{DynamicResource TextFillColorTertiaryBrush}" TextTrimming="CharacterEllipsis"/>
+                                                    <TextBlock Text="{Binding LocationKey}" FontSize="11" Foreground="{DynamicResource TextFillColorTertiaryBrush}" TextTrimming="CharacterEllipsis"/>
                                                 </StackPanel>
                                             </StackPanel>
 
@@ -2451,7 +2474,7 @@
                                                 <ui:ToggleSwitch IsChecked="{Binding IsEnabled, Mode=TwoWay}" Margin="0,0,8,0"
                                                                  Click="TglStartupItem_Click" Tag="{Binding}"
                                                                  Visibility="{Binding IsBinaryStateCategory, Converter={StaticResource BooleanToVisibilityConverter}}"/>
-                                                <ComboBox Width="100" Margin="0,0,8,0" FontSize="11.5" Padding="8,4"
+                                                <ComboBox Width="100" Margin="0,0,8,0" FontSize="12" Padding="8,4"
                                                           Visibility="{Binding IsMultiStateCategory, Converter={StaticResource BooleanToVisibilityConverter}}"
                                                           ItemsSource="{Binding AvailableStateOptions}"
                                                           SelectedItem="{Binding SelectedStateOption, Mode=OneWay}"
@@ -2479,13 +2502,13 @@
                                 <ui:Button x:Name="BtnGlobalPageNext" Content="›" Appearance="Secondary" Padding="8,0" Height="28" MinWidth="28" FontSize="12" Margin="6,0,4,0" VerticalContentAlignment="Center" ToolTip="下一页" Click="BtnGlobalPageNext_Click"/>
                                 <ui:Button x:Name="BtnGlobalPageLast" Content="»" Appearance="Secondary" Padding="8,0" Height="28" MinWidth="28" FontSize="12" Margin="0,0,10,0" VerticalContentAlignment="Center" ToolTip="末页" Click="BtnGlobalPageLast_Click"/>
                                 <ui:TextBox x:Name="TxtGlobalPageInput" Width="46" MinWidth="46" Height="28" MinHeight="28" MaxHeight="28"
-                                            Padding="4,0" Margin="0,0,6,0" FontSize="11.5" ClearButtonEnabled="False"
+                                            Padding="4,0" Margin="0,0,6,0" FontSize="12" ClearButtonEnabled="False"
                                             Text="1" TextAlignment="Center" HorizontalContentAlignment="Center" VerticalContentAlignment="Center" VerticalAlignment="Center"
                                             ToolTip="输入页码后按 Enter 跳转"
                                             PreviewTextInput="TxtGlobalPageInput_PreviewTextInput"
                                             KeyDown="TxtGlobalPageInput_KeyDown"
                                             LostFocus="TxtGlobalPageInput_LostFocus"/>
-                                <TextBlock x:Name="TxtGlobalPageInfo" Text="/ 1 页" FontSize="11.5" VerticalAlignment="Center" Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+                                <TextBlock x:Name="TxtGlobalPageInfo" Text="/ 1 页" FontSize="12" VerticalAlignment="Center" Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
                             </StackPanel>
                         </Border>
                     </Grid>
@@ -2495,21 +2518,24 @@
 
         <!-- 规则编辑浮层弹窗 (遵循 Windows 11 原生实心 ContentDialog 规范，动态自适应暗黑/浅色主题) -->
         <Grid x:Name="DialogEditRuleHost" Grid.Row="0" Grid.RowSpan="2" Background="{DynamicResource SmokeFillColorDefaultBrush}" Visibility="Collapsed">
-            <Border Width="480" HorizontalAlignment="Center" VerticalAlignment="Center" CornerRadius="8" 
-                    Background="{DynamicResource SolidBackgroundFillColorBaseBrush}" 
-                    BorderBrush="{DynamicResource SurfaceStrokeColorDefaultBrush}" 
-                    BorderThickness="1" Padding="24">
-                <Border.Effect>
-                    <DropShadowEffect BlurRadius="40" Direction="270" ShadowDepth="10" Opacity="0.35" Color="#000000"/>
-                </Border.Effect>
+            <Grid Width="480" HorizontalAlignment="Center" VerticalAlignment="Center">
+                <Border CornerRadius="8" Background="{DynamicResource SolidBackgroundFillColorBaseBrush}" IsHitTestVisible="False">
+                    <Border.Effect>
+                        <DropShadowEffect BlurRadius="40" Direction="270" ShadowDepth="10" Opacity="0.35" Color="#000000"/>
+                    </Border.Effect>
+                </Border>
+                <Border CornerRadius="8"
+                        Background="{DynamicResource SolidBackgroundFillColorBaseBrush}"
+                        BorderBrush="{DynamicResource SurfaceStrokeColorDefaultBrush}"
+                        BorderThickness="1" Padding="24">
                 <StackPanel>
                     <TextBlock Text="编辑规则" FontSize="19" FontWeight="SemiBold" Foreground="{DynamicResource TextFillColorPrimaryBrush}" Margin="0,0,0,16"/>
 
                     <Border CornerRadius="6" Background="{DynamicResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" BorderThickness="1" Padding="12" Margin="0,0,0,16">
                         <StackPanel>
-                            <TextBlock x:Name="TxtEditRuleTitle" Text="规则名称" FontSize="14.5" FontWeight="SemiBold" Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
+                            <TextBlock x:Name="TxtEditRuleTitle" Text="规则名称" FontSize="14" FontWeight="SemiBold" Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
                             <TextBlock x:Name="TxtEditRuleCategory" Text="类别: Win32服务" FontSize="12" Foreground="{DynamicResource TextFillColorSecondaryBrush}" Margin="0,3,0,0"/>
-                            <TextBlock x:Name="TxtEditRuleCommand" Text="C:\Program Files\..." FontSize="11.5" Foreground="{DynamicResource TextFillColorTertiaryBrush}" TextTrimming="CharacterEllipsis" Margin="0,3,0,0"/>
+                            <TextBlock x:Name="TxtEditRuleCommand" Text="C:\Program Files\..." FontSize="12" Foreground="{DynamicResource TextFillColorTertiaryBrush}" TextTrimming="CharacterEllipsis" Margin="0,3,0,0"/>
                         </StackPanel>
                     </Border>
 
@@ -2533,18 +2559,22 @@
                         <ui:Button Grid.Column="2" Content="取消" Appearance="Secondary" Height="36" HorizontalAlignment="Stretch" Click="BtnCancelRuleEdit_Click"/>
                     </Grid>
                 </StackPanel>
-            </Border>
+                </Border>
+            </Grid>
         </Grid>
 
         <!-- 手动新建防护规则弹窗 -->
         <Grid x:Name="DialogCreateRuleHost" Grid.Row="0" Grid.RowSpan="2" Background="{DynamicResource SmokeFillColorDefaultBrush}" Visibility="Collapsed">
-            <Border Width="560" MaxHeight="660" HorizontalAlignment="Center" VerticalAlignment="Center" CornerRadius="8"
-                    Background="{DynamicResource SolidBackgroundFillColorBaseBrush}"
-                    BorderBrush="{DynamicResource SurfaceStrokeColorDefaultBrush}"
-                    BorderThickness="1" Padding="24">
-                <Border.Effect>
-                    <DropShadowEffect BlurRadius="40" Direction="270" ShadowDepth="10" Opacity="0.35" Color="#000000"/>
-                </Border.Effect>
+            <Grid Width="560" MaxHeight="660" HorizontalAlignment="Center" VerticalAlignment="Center">
+                <Border CornerRadius="8" Background="{DynamicResource SolidBackgroundFillColorBaseBrush}" IsHitTestVisible="False">
+                    <Border.Effect>
+                        <DropShadowEffect BlurRadius="40" Direction="270" ShadowDepth="10" Opacity="0.35" Color="#000000"/>
+                    </Border.Effect>
+                </Border>
+                <Border CornerRadius="8"
+                        Background="{DynamicResource SolidBackgroundFillColorBaseBrush}"
+                        BorderBrush="{DynamicResource SurfaceStrokeColorDefaultBrush}"
+                        BorderThickness="1" Padding="24">
                 <Grid>
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/>
@@ -2621,7 +2651,7 @@
                             <Border CornerRadius="6" Background="{DynamicResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" BorderThickness="1" Padding="10,8" Margin="0,0,0,6">
                                 <TextBlock x:Name="TxtCreateRuleMetaHint"
                                            Text="提示：选择文件将自动提取签名、PE 元数据与哈希；选择文件夹则对该目录下所有同类别目标生效。"
-                                           FontSize="11.5" Foreground="{DynamicResource TextFillColorSecondaryBrush}" TextWrapping="Wrap"/>
+                                           FontSize="12" Foreground="{DynamicResource TextFillColorSecondaryBrush}" TextWrapping="Wrap"/>
                             </Border>
 
                             <TextBlock x:Name="TxtCreateRuleError" Visibility="Collapsed"
@@ -2640,18 +2670,22 @@
                         <ui:Button Grid.Column="2" Content="取消" Appearance="Secondary" Height="36" HorizontalAlignment="Stretch" Click="BtnCancelCreateRule_Click"/>
                     </Grid>
                 </Grid>
-            </Border>
+                </Border>
+            </Grid>
         </Grid>
 
         <!-- 外壳扩展深入分析浮层弹窗 (对齐 ContextMenuManager 深入分析结果) -->
         <Grid x:Name="DialogDeepAnalysisHost" Grid.Row="0" Grid.RowSpan="2" Background="{DynamicResource SmokeFillColorDefaultBrush}" Visibility="Collapsed">
-            <Border Width="620" MaxHeight="560" HorizontalAlignment="Center" VerticalAlignment="Center" CornerRadius="8" 
-                    Background="{DynamicResource SolidBackgroundFillColorBaseBrush}" 
-                    BorderBrush="{DynamicResource SurfaceStrokeColorDefaultBrush}" 
-                    BorderThickness="1" Padding="24">
-                <Border.Effect>
-                    <DropShadowEffect BlurRadius="40" Direction="270" ShadowDepth="10" Opacity="0.35" Color="#000000"/>
-                </Border.Effect>
+            <Grid Width="620" MaxHeight="560" HorizontalAlignment="Center" VerticalAlignment="Center">
+                <Border CornerRadius="8" Background="{DynamicResource SolidBackgroundFillColorBaseBrush}" IsHitTestVisible="False">
+                    <Border.Effect>
+                        <DropShadowEffect BlurRadius="40" Direction="270" ShadowDepth="10" Opacity="0.35" Color="#000000"/>
+                    </Border.Effect>
+                </Border>
+                <Border CornerRadius="8"
+                        Background="{DynamicResource SolidBackgroundFillColorBaseBrush}"
+                        BorderBrush="{DynamicResource SurfaceStrokeColorDefaultBrush}"
+                        BorderThickness="1" Padding="24">
                 <Grid>
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/>
@@ -2664,10 +2698,10 @@
                         <TextBlock x:Name="TxtAnalyzeTitle" Text="深入分析结果" FontSize="20" FontWeight="Bold" Foreground="{DynamicResource TextFillColorPrimaryBrush}" TextTrimming="CharacterEllipsis"/>
                         <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
                             <Border Padding="8,2.5" CornerRadius="4" Background="{DynamicResource ControlFillColorDefaultBrush}" Margin="0,0,8,0">
-                                <TextBlock x:Name="TxtAnalyzeScene" Text="Shell Extension" FontSize="11.5" Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+                                <TextBlock x:Name="TxtAnalyzeScene" Text="Shell Extension" FontSize="12" Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
                             </Border>
                             <Border Padding="8,2.5" CornerRadius="4" Background="#1A0078D4">
-                                <TextBlock x:Name="TxtAnalyzeProbeBadge" Text="单个处理程序" FontSize="11.5" Foreground="#0078D4" FontWeight="SemiBold"/>
+                                <TextBlock x:Name="TxtAnalyzeProbeBadge" Text="单个处理程序" FontSize="12" Foreground="#0078D4" FontWeight="SemiBold"/>
                             </Border>
                         </StackPanel>
                     </StackPanel>
@@ -2708,7 +2742,7 @@
                             <RowDefinition Height="*"/>
                         </Grid.RowDefinitions>
                         <TextBlock Grid.Row="0" Text="已解析菜单项" FontSize="14" FontWeight="SemiBold" Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
-                        <TextBlock Grid.Row="1" Text="菜单文字与图标为运行时探测结果；部分自绘或回调扩展可能无法显示全部子项。" FontSize="11.5" Foreground="{DynamicResource TextFillColorSecondaryBrush}" Margin="0,3,0,8" TextWrapping="Wrap"/>
+                        <TextBlock Grid.Row="1" Text="菜单文字与图标为运行时探测结果；部分自绘或回调扩展可能无法显示全部子项。" FontSize="12" Foreground="{DynamicResource TextFillColorSecondaryBrush}" Margin="0,3,0,8" TextWrapping="Wrap"/>
                         <Border Grid.Row="2" CornerRadius="6" BorderThickness="1"
                                 BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
                                 Background="{DynamicResource CardBackgroundFillColorDefaultBrush}">
@@ -2748,8 +2782,8 @@
                                     <StackPanel Margin="{Binding IndentMargin}" Orientation="Horizontal" VerticalAlignment="Center">
                                         <TextBlock Text="› " FontSize="12" Foreground="{DynamicResource TextFillColorTertiaryBrush}" VerticalAlignment="Center"/>
                                         <StackPanel>
-                                            <TextBlock Text="{Binding Text}" FontSize="12.5" FontWeight="SemiBold" Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
-                                            <TextBlock Text="{Binding Verb}" FontSize="10.5" Foreground="{DynamicResource TextFillColorTertiaryBrush}" Visibility="{Binding HasVerb, Converter={StaticResource BooleanToVisibilityConverter}}"/>
+                                            <TextBlock Text="{Binding Text}" FontSize="13" FontWeight="SemiBold" Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
+                                            <TextBlock Text="{Binding Verb}" FontSize="11" Foreground="{DynamicResource TextFillColorTertiaryBrush}" Visibility="{Binding HasVerb, Converter={StaticResource BooleanToVisibilityConverter}}"/>
                                         </StackPanel>
                                     </StackPanel>
                                 </DataTemplate>
@@ -2771,43 +2805,47 @@
                             <ColumnDefinition Width="6" />
                             <ColumnDefinition Width="*" />
                         </Grid.ColumnDefinitions>
-                        <ui:Button Grid.Column="0" Content="定位文件" Appearance="Secondary" Height="34" HorizontalAlignment="Stretch" Padding="4,0" FontSize="11.5" Click="BtnAnalyzeOpenExplorer_Click"/>
-                        <ui:Button Grid.Column="2" Content="定位注册表" Appearance="Secondary" Height="34" HorizontalAlignment="Stretch" Padding="4,0" FontSize="11.5" Click="BtnAnalyzeOpenReg_Click"/>
-                        <ui:Button Grid.Column="4" Content="属性" Appearance="Secondary" Height="34" HorizontalAlignment="Stretch" Padding="4,0" FontSize="11.5" Click="BtnAnalyzeProperties_Click"/>
-                        <ui:Button Grid.Column="6" Content="搜索" Appearance="Secondary" Height="34" HorizontalAlignment="Stretch" Padding="4,0" FontSize="11.5" Click="BtnAnalyzeWebSearch_Click"/>
-                        <ui:Button Grid.Column="8" Content="关闭" Appearance="Primary" Height="34" HorizontalAlignment="Stretch" Padding="4,0" FontSize="11.5" Click="BtnAnalyzeClose_Click"/>
+                        <ui:Button Grid.Column="0" Content="定位文件" Appearance="Secondary" Height="34" HorizontalAlignment="Stretch" Padding="4,0" FontSize="12" Click="BtnAnalyzeOpenExplorer_Click"/>
+                        <ui:Button Grid.Column="2" Content="定位注册表" Appearance="Secondary" Height="34" HorizontalAlignment="Stretch" Padding="4,0" FontSize="12" Click="BtnAnalyzeOpenReg_Click"/>
+                        <ui:Button Grid.Column="4" Content="属性" Appearance="Secondary" Height="34" HorizontalAlignment="Stretch" Padding="4,0" FontSize="12" Click="BtnAnalyzeProperties_Click"/>
+                        <ui:Button Grid.Column="6" Content="搜索" Appearance="Secondary" Height="34" HorizontalAlignment="Stretch" Padding="4,0" FontSize="12" Click="BtnAnalyzeWebSearch_Click"/>
+                        <ui:Button Grid.Column="8" Content="关闭" Appearance="Primary" Height="34" HorizontalAlignment="Stretch" Padding="4,0" FontSize="12" Click="BtnAnalyzeClose_Click"/>
                     </Grid>
                 </Grid>
-            </Border>
+                </Border>
+            </Grid>
         </Grid>
 
         <!-- 启动项与待审核项详情弹窗 (支持命令行与注册表位置跳转) -->
         <Grid x:Name="DialogItemDetailHost" Grid.Row="0" Grid.RowSpan="2" Background="{DynamicResource SmokeFillColorDefaultBrush}" Visibility="Collapsed">
-            <Border Width="560" HorizontalAlignment="Center" VerticalAlignment="Center" CornerRadius="8"
-                    Background="{DynamicResource SolidBackgroundFillColorBaseBrush}"
-                    BorderBrush="{DynamicResource SurfaceStrokeColorDefaultBrush}"
-                    BorderThickness="1" Padding="24">
-                <Border.Effect>
-                    <DropShadowEffect BlurRadius="40" Direction="270" ShadowDepth="10" Opacity="0.35" Color="#000000"/>
-                </Border.Effect>
+            <Grid Width="560" HorizontalAlignment="Center" VerticalAlignment="Center">
+                <Border CornerRadius="8" Background="{DynamicResource SolidBackgroundFillColorBaseBrush}" IsHitTestVisible="False">
+                    <Border.Effect>
+                        <DropShadowEffect BlurRadius="40" Direction="270" ShadowDepth="10" Opacity="0.35" Color="#000000"/>
+                    </Border.Effect>
+                </Border>
+                <Border CornerRadius="8"
+                        Background="{DynamicResource SolidBackgroundFillColorBaseBrush}"
+                        BorderBrush="{DynamicResource SurfaceStrokeColorDefaultBrush}"
+                        BorderThickness="1" Padding="24">
                 <StackPanel>
                     <TextBlock x:Name="TxtItemDetailTitle" Text="项目详情" FontSize="18" FontWeight="Bold" Foreground="{DynamicResource TextFillColorPrimaryBrush}" TextTrimming="CharacterEllipsis"/>
                     <StackPanel Orientation="Horizontal" Margin="0,6,0,14">
                         <Border Padding="6,2" CornerRadius="4" Background="{DynamicResource ControlFillColorDefaultBrush}" Margin="0,0,8,0">
-                            <TextBlock x:Name="TxtItemDetailCategory" Text="-" FontSize="11.5" Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+                            <TextBlock x:Name="TxtItemDetailCategory" Text="-" FontSize="12" Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
                         </Border>
                         <Border Padding="6,2" CornerRadius="4" Background="#1A107C41" Margin="0,0,8,0">
-                            <TextBlock x:Name="TxtItemDetailPublisher" Text="-" FontSize="11.5" Foreground="#107C41" FontWeight="SemiBold"/>
+                            <TextBlock x:Name="TxtItemDetailPublisher" Text="-" FontSize="12" Foreground="#107C41" FontWeight="SemiBold"/>
                         </Border>
-                        <TextBlock x:Name="TxtItemDetailStatus" Text="" FontSize="11.5" Foreground="{DynamicResource TextFillColorSecondaryBrush}" VerticalAlignment="Center"/>
+                        <TextBlock x:Name="TxtItemDetailStatus" Text="" FontSize="12" Foreground="{DynamicResource TextFillColorSecondaryBrush}" VerticalAlignment="Center"/>
                     </StackPanel>
 
                     <StackPanel x:Name="PanelItemDetailSourceProcess" Visibility="Collapsed" Margin="0,0,0,12">
-                        <TextBlock Text="创建来源进程" FontSize="12.5" FontWeight="SemiBold" Foreground="{DynamicResource TextFillColorSecondaryBrush}" Margin="0,0,0,4"/>
+                        <TextBlock Text="创建来源进程" FontSize="13" FontWeight="SemiBold" Foreground="{DynamicResource TextFillColorSecondaryBrush}" Margin="0,0,0,4"/>
                         <ui:TextBox x:Name="TxtItemDetailSourceProcess" Text="-" IsReadOnly="True" FontSize="12" Padding="10,7"/>
                     </StackPanel>
 
-                    <TextBlock Text="命令行" FontSize="12.5" FontWeight="SemiBold" Foreground="{DynamicResource TextFillColorSecondaryBrush}" Margin="0,0,0,4"/>
+                    <TextBlock Text="命令行" FontSize="13" FontWeight="SemiBold" Foreground="{DynamicResource TextFillColorSecondaryBrush}" Margin="0,0,0,4"/>
                     <Grid Margin="0,0,0,12">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*"/>
@@ -2818,7 +2856,7 @@
                         <ui:Button Grid.Column="1" Content="打开" Appearance="Secondary" Padding="14,7" Icon="{ui:SymbolIcon FolderOpen20}" Click="BtnItemDetailOpenFile_Click"/>
                     </Grid>
 
-                    <TextBlock Text="存储位置" FontSize="12.5" FontWeight="SemiBold" Foreground="{DynamicResource TextFillColorSecondaryBrush}" Margin="0,0,0,4"/>
+                    <TextBlock Text="存储位置" FontSize="13" FontWeight="SemiBold" Foreground="{DynamicResource TextFillColorSecondaryBrush}" Margin="0,0,0,4"/>
                     <Grid Margin="0,0,0,20">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*"/>
@@ -2835,21 +2873,25 @@
                         <ui:Button Content="关闭" Appearance="Primary" Padding="24,6" Click="BtnItemDetailClose_Click"/>
                     </StackPanel>
                 </StackPanel>
-            </Border>
+                </Border>
+            </Grid>
         </Grid>
 
         <!-- 编辑备注浮层弹窗 -->
         <Grid x:Name="DialogEditNoteHost" Grid.Row="0" Grid.RowSpan="2" Background="{DynamicResource SmokeFillColorDefaultBrush}" Visibility="Collapsed">
-            <Border Width="440" HorizontalAlignment="Center" VerticalAlignment="Center" CornerRadius="8"
-                    Background="{DynamicResource SolidBackgroundFillColorBaseBrush}"
-                    BorderBrush="{DynamicResource SurfaceStrokeColorDefaultBrush}"
-                    BorderThickness="1" Padding="24">
-                <Border.Effect>
-                    <DropShadowEffect BlurRadius="40" Direction="270" ShadowDepth="10" Opacity="0.35" Color="#000000"/>
-                </Border.Effect>
+            <Grid Width="440" HorizontalAlignment="Center" VerticalAlignment="Center">
+                <Border CornerRadius="8" Background="{DynamicResource SolidBackgroundFillColorBaseBrush}" IsHitTestVisible="False">
+                    <Border.Effect>
+                        <DropShadowEffect BlurRadius="40" Direction="270" ShadowDepth="10" Opacity="0.35" Color="#000000"/>
+                    </Border.Effect>
+                </Border>
+                <Border CornerRadius="8"
+                        Background="{DynamicResource SolidBackgroundFillColorBaseBrush}"
+                        BorderBrush="{DynamicResource SurfaceStrokeColorDefaultBrush}"
+                        BorderThickness="1" Padding="24">
                 <StackPanel>
                     <TextBlock Text="编辑备注" FontSize="18" FontWeight="SemiBold" Foreground="{DynamicResource TextFillColorPrimaryBrush}" Margin="0,0,0,6"/>
-                    <TextBlock x:Name="TxtEditNoteItemName" Text="-" FontSize="12.5" Foreground="{DynamicResource TextFillColorSecondaryBrush}" Margin="0,0,0,12" TextTrimming="CharacterEllipsis"/>
+                    <TextBlock x:Name="TxtEditNoteItemName" Text="-" FontSize="13" Foreground="{DynamicResource TextFillColorSecondaryBrush}" Margin="0,0,0,12" TextTrimming="CharacterEllipsis"/>
                     <ui:TextBox x:Name="TxtEditNoteInput" PlaceholderText="输入该菜单项的备注说明（留空表示清除备注）..." AcceptsReturn="True" TextWrapping="Wrap" MinHeight="80" Margin="0,0,0,18"/>
                     <Grid>
                         <Grid.ColumnDefinitions>
@@ -2861,18 +2903,22 @@
                         <ui:Button Grid.Column="2" Content="取消" Appearance="Secondary" Height="36" HorizontalAlignment="Stretch" Click="BtnCancelNote_Click"/>
                     </Grid>
                 </StackPanel>
-            </Border>
+                </Border>
+            </Grid>
         </Grid>
 
         <!-- 日志恢复选项浮层弹窗 -->
         <Grid x:Name="DialogRestoreActionHost" Grid.Row="0" Grid.RowSpan="2" Background="{DynamicResource SmokeFillColorDefaultBrush}" Visibility="Collapsed">
-            <Border Width="480" HorizontalAlignment="Center" VerticalAlignment="Center" CornerRadius="8"
-                    Background="{DynamicResource SolidBackgroundFillColorBaseBrush}"
-                    BorderBrush="{DynamicResource SurfaceStrokeColorDefaultBrush}"
-                    BorderThickness="1" Padding="24">
-                <Border.Effect>
-                    <DropShadowEffect BlurRadius="40" Direction="270" ShadowDepth="10" Opacity="0.35" Color="#000000"/>
-                </Border.Effect>
+            <Grid Width="480" HorizontalAlignment="Center" VerticalAlignment="Center">
+                <Border CornerRadius="8" Background="{DynamicResource SolidBackgroundFillColorBaseBrush}" IsHitTestVisible="False">
+                    <Border.Effect>
+                        <DropShadowEffect BlurRadius="40" Direction="270" ShadowDepth="10" Opacity="0.35" Color="#000000"/>
+                    </Border.Effect>
+                </Border>
+                <Border CornerRadius="8"
+                        Background="{DynamicResource SolidBackgroundFillColorBaseBrush}"
+                        BorderBrush="{DynamicResource SurfaceStrokeColorDefaultBrush}"
+                        BorderThickness="1" Padding="24">
                 <StackPanel>
                     <TextBlock x:Name="TxtRestoreDialogTitle" Text="选择恢复方式" FontSize="19" FontWeight="SemiBold" Foreground="{DynamicResource TextFillColorPrimaryBrush}" Margin="0,0,0,14"/>
 
@@ -2880,7 +2926,7 @@
                         <StackPanel>
                             <TextBlock x:Name="TxtRestoreTargetName" Text="目标项目" FontSize="14" FontWeight="SemiBold" Foreground="{DynamicResource TextFillColorPrimaryBrush}" TextTrimming="CharacterEllipsis"/>
                             <TextBlock x:Name="TxtRestoreTargetCategory" Text="类别" FontSize="12" Foreground="{DynamicResource TextFillColorSecondaryBrush}" Margin="0,3,0,0"/>
-                            <TextBlock x:Name="TxtRestoreTargetLocation" Text="位置" FontSize="11.5" Foreground="{DynamicResource TextFillColorTertiaryBrush}" TextTrimming="CharacterEllipsis" Margin="0,3,0,0"/>
+                            <TextBlock x:Name="TxtRestoreTargetLocation" Text="位置" FontSize="12" Foreground="{DynamicResource TextFillColorTertiaryBrush}" TextTrimming="CharacterEllipsis" Margin="0,3,0,0"/>
                         </StackPanel>
                     </Border>
 
@@ -2897,18 +2943,22 @@
                         <ui:Button Grid.Column="2" Content="取消" Appearance="Secondary" Height="36" HorizontalAlignment="Stretch" Click="BtnCancelRestore_Click"/>
                     </Grid>
                 </StackPanel>
-            </Border>
+                </Border>
+            </Grid>
         </Grid>
 
         <!-- Win+X 重命名浮层弹窗 -->
         <Grid x:Name="DialogWinXRenameHost" Grid.Row="0" Grid.RowSpan="2" Background="{DynamicResource SmokeFillColorDefaultBrush}" Visibility="Collapsed">
-            <Border Width="440" HorizontalAlignment="Center" VerticalAlignment="Center" CornerRadius="8"
-                    Background="{DynamicResource SolidBackgroundFillColorBaseBrush}"
-                    BorderBrush="{DynamicResource SurfaceStrokeColorDefaultBrush}"
-                    BorderThickness="1" Padding="24">
-                <Border.Effect>
-                    <DropShadowEffect BlurRadius="40" Direction="270" ShadowDepth="10" Opacity="0.35" Color="#000000"/>
-                </Border.Effect>
+            <Grid Width="440" HorizontalAlignment="Center" VerticalAlignment="Center">
+                <Border CornerRadius="8" Background="{DynamicResource SolidBackgroundFillColorBaseBrush}" IsHitTestVisible="False">
+                    <Border.Effect>
+                        <DropShadowEffect BlurRadius="40" Direction="270" ShadowDepth="10" Opacity="0.35" Color="#000000"/>
+                    </Border.Effect>
+                </Border>
+                <Border CornerRadius="8"
+                        Background="{DynamicResource SolidBackgroundFillColorBaseBrush}"
+                        BorderBrush="{DynamicResource SurfaceStrokeColorDefaultBrush}"
+                        BorderThickness="1" Padding="24">
                 <StackPanel>
                     <TextBlock x:Name="TxtWinXRenameTitle" Text="重命名 Win+X 项目" FontSize="18" FontWeight="SemiBold" Foreground="{DynamicResource TextFillColorPrimaryBrush}" Margin="0,0,0,10"/>
                     <TextBlock x:Name="TxtWinXRenameOriginal" Text="" FontSize="12" Foreground="{DynamicResource TextFillColorSecondaryBrush}" Margin="0,0,0,12" TextTrimming="CharacterEllipsis"/>
@@ -2923,7 +2973,8 @@
                         <ui:Button Grid.Column="2" Content="取消" Appearance="Secondary" Height="36" HorizontalAlignment="Stretch" Click="BtnWinXCancelRename_Click"/>
                     </Grid>
                 </StackPanel>
-            </Border>
+                </Border>
+            </Grid>
         </Grid>
     </Grid>
 </ui:FluentWindow>

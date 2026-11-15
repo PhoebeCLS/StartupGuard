@@ -881,7 +881,7 @@ public partial class MainWindow : FluentWindow
             VerticalAlignment = VerticalAlignment.Top,
             HorizontalAlignment = HorizontalAlignment.Stretch,
             LineHeight = 22,
-            FontSize = 13.5,
+            FontSize = 14,
             MaxWidth = 420
         };
     }
@@ -1663,37 +1663,12 @@ public partial class MainWindow : FluentWindow
     {
         if (ContextMenuSubListPanel == null || RotateContextMenuChevron == null) return;
         bool targetState = expand ?? (ContextMenuSubListPanel.Visibility != Visibility.Visible);
-
-        var rotateAnim = new DoubleAnimation(targetState ? 180 : 0, TimeSpan.FromMilliseconds(200))
-        {
-            EasingFunction = new CubicEase { EasingMode = EasingMode.EaseInOut }
-        };
-        RotateContextMenuChevron.BeginAnimation(RotateTransform.AngleProperty, rotateAnim);
-
-        if (targetState)
-        {
-            ContextMenuSubListPanel.Visibility = Visibility.Visible;
-            var opacityAnim = new DoubleAnimation(0.0, 1.0, TimeSpan.FromMilliseconds(200))
-            {
-                EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut }
-            };
-            ContextMenuSubListPanel.BeginAnimation(UIElement.OpacityProperty, opacityAnim);
-        }
-        else
-        {
-            var opacityAnim = new DoubleAnimation(1.0, 0.0, TimeSpan.FromMilliseconds(150))
-            {
-                EasingFunction = new CubicEase { EasingMode = EasingMode.EaseIn }
-            };
-            opacityAnim.Completed += (_, _) =>
-            {
-                if (RotateContextMenuChevron.Angle < 90)
-                {
-                    ContextMenuSubListPanel.Visibility = Visibility.Collapsed;
-                }
-            };
-            ContextMenuSubListPanel.BeginAnimation(UIElement.OpacityProperty, opacityAnim);
-        }
+        AnimateCollapsibleSection(
+            targetState,
+            RotateContextMenuChevron,
+            ContextMenuSubListPanel,
+            () => ContextMenuSubListPanel.Tag as bool? ?? false,
+            state => ContextMenuSubListPanel.Tag = state);
     }
 
     private void SubNavContextMenu_Checked(object sender, RoutedEventArgs e)
@@ -4103,7 +4078,7 @@ public partial class MainWindow : FluentWindow
                 Padding = new Thickness(8, 0, 8, 0),
                 Height = 28,
                 MinWidth = 28,
-                FontSize = 11.5,
+                FontSize = 12,
                 VerticalContentAlignment = VerticalAlignment.Center,
                 Margin = new Thickness(2, 0, 2, 0),
                 Tag = pageNum
@@ -4983,8 +4958,27 @@ public partial class MainWindow : FluentWindow
         AnimateCollapsibleSection(_isAboutExpanded, RotateAboutChevron, AboutDetailsContainer, () => _isAboutExpanded);
     }
 
-    private static void AnimateCollapsibleSection(bool expand, RotateTransform chevron, FrameworkElement container, Func<bool> currentExpandedState)
+    private static void AnimateCollapsibleSection(
+        bool expand,
+        RotateTransform chevron,
+        FrameworkElement container,
+        Func<bool> currentExpandedState,
+        Action<bool>? setState = null)
     {
+        setState?.Invoke(expand);
+
+        if (container.LayoutTransform is not ScaleTransform scaleTransform)
+        {
+            scaleTransform = new ScaleTransform(1.0, expand ? 0.0 : 1.0);
+            container.LayoutTransform = scaleTransform;
+        }
+
+        if (container.RenderTransform is not TranslateTransform translateTransform)
+        {
+            translateTransform = new TranslateTransform(0.0, expand ? -8.0 : 0.0);
+            container.RenderTransform = translateTransform;
+        }
+
         var rotateAnim = new DoubleAnimation(expand ? 180 : 0, TimeSpan.FromMilliseconds(200))
         {
             EasingFunction = new CubicEase { EasingMode = EasingMode.EaseInOut }
@@ -4994,26 +4988,25 @@ public partial class MainWindow : FluentWindow
         if (expand)
         {
             container.Visibility = Visibility.Visible;
-            var opacityAnim = new DoubleAnimation(0.0, 1.0, TimeSpan.FromMilliseconds(200))
-            {
-                EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut }
-            };
-            container.BeginAnimation(UIElement.OpacityProperty, opacityAnim);
+            var easeOut = new CubicEase { EasingMode = EasingMode.EaseOut };
+            scaleTransform.BeginAnimation(ScaleTransform.ScaleYProperty, new DoubleAnimation(1.0, TimeSpan.FromMilliseconds(220)) { EasingFunction = easeOut });
+            translateTransform.BeginAnimation(TranslateTransform.YProperty, new DoubleAnimation(0.0, TimeSpan.FromMilliseconds(220)) { EasingFunction = easeOut });
+            container.BeginAnimation(UIElement.OpacityProperty, new DoubleAnimation(1.0, TimeSpan.FromMilliseconds(180)) { EasingFunction = easeOut });
         }
         else
         {
-            var opacityAnim = new DoubleAnimation(1.0, 0.0, TimeSpan.FromMilliseconds(150))
-            {
-                EasingFunction = new CubicEase { EasingMode = EasingMode.EaseIn }
-            };
-            opacityAnim.Completed += (_, _) =>
+            var easeIn = new CubicEase { EasingMode = EasingMode.EaseIn };
+            var scaleAnim = new DoubleAnimation(0.0, TimeSpan.FromMilliseconds(180)) { EasingFunction = easeIn };
+            scaleAnim.Completed += (_, _) =>
             {
                 if (!currentExpandedState())
                 {
                     container.Visibility = Visibility.Collapsed;
                 }
             };
-            container.BeginAnimation(UIElement.OpacityProperty, opacityAnim);
+            scaleTransform.BeginAnimation(ScaleTransform.ScaleYProperty, scaleAnim);
+            translateTransform.BeginAnimation(TranslateTransform.YProperty, new DoubleAnimation(-8.0, TimeSpan.FromMilliseconds(180)) { EasingFunction = easeIn });
+            container.BeginAnimation(UIElement.OpacityProperty, new DoubleAnimation(0.0, TimeSpan.FromMilliseconds(140)) { EasingFunction = easeIn });
         }
     }
 
