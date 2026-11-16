@@ -335,10 +335,12 @@ public partial class MainWindow : FluentWindow
     private int _isRefreshingFlag;
     private int _refreshQueuedFlag;
     private int _queuedShowOverlay;
+    private readonly Stack<string> _navigationHistory = new();
+    private string _currentPageTag = "PageStartupManager";
+    private bool _isNavigatingBack;
 
     public MainWindow()
     {
-        StartupGuard.Themes.FluentFontHelper.ApplyPreferredFont(this);
         InitializeComponent();
         _isInitialized = true;
         SyncAboutVersionDisplay();
@@ -380,19 +382,43 @@ public partial class MainWindow : FluentWindow
             LoadUserPreferences();
             Microsoft.Win32.SystemEvents.DisplaySettingsChanged += OnDisplaySettingsChanged;
             Microsoft.Win32.SystemEvents.UserPreferenceChanged += OnSystemUserPreferenceChanged;
-            _ = Task.Run(() => RunActivatePipeServerAsync(_lifecycleCts.Token));
-            EnsureTrayHostRunning();
-            EnsureServiceRunning();
-            UpdateServiceStatusUI();
-            StartSharedDataWatcher();
 
             if (!string.IsNullOrWhiteSpace(App.InitialNavigationPage))
             {
                 NavigateAndSelectPage(App.InitialNavigationPage);
             }
 
+            // 先让出首帧绘制，使 Mica 主窗体毫秒级呈现，再并行初始化托盘/服务/监控与首次数据加载
+            await Task.Yield();
+            _ = Task.Run(() => RunActivatePipeServerAsync(_lifecycleCts.Token));
+            _ = Task.Run(() =>
+            {
+                EnsureTrayHostRunning();
+                EnsureServiceRunning();
+                Dispatcher.InvokeAsync(StartSharedDataWatcher, System.Windows.Threading.DispatcherPriority.Background);
+                Dispatcher.InvokeAsync(UpdateServiceStatusUI, System.Windows.Threading.DispatcherPriority.Background);
+            });
+
             await RefreshAllDataAsync(showOverlay: _allStartupItems.Count == 0, minimumOverlayMs: 0);
             _initialLoadCompleted = true;
+
+            _ = Task.Run(() =>
+            {
+                try
+                {
+                    if (UserSettingsStore.GetMd5ValidationEnabled())
+                    {
+                        var md5Auto = Md5RuleValidator.ValidateAndCleanObsoleteMd5Rules(_sqliteRepo);
+                        if (md5Auto.DeletedCount > 0)
+                            SyncRulesBinaryAndNotifyService(_sqliteRepo);
+                    }
+                    else if (Md5RuleValidator.BackfillMissingRuleMetadata(_sqliteRepo) > 0)
+                    {
+                        SyncRulesBinaryAndNotifyService(_sqliteRepo);
+                    }
+                }
+                catch { }
+            });
         };
 
         Activated += async (_, _) =>
@@ -593,7 +619,7 @@ public partial class MainWindow : FluentWindow
                 _ => UserSettingsStore.IsSystemAppsLightTheme() ? ApplicationTheme.Light : ApplicationTheme.Dark
             };
             ApplicationThemeManager.Apply(resolvedTheme, WindowBackdropType.Mica, true);
-            TryApplyFluentBackdrop();
+            StartupGuard.Themes.FluentBackdropHelper.ApplyMica(this, resolvedTheme == ApplicationTheme.Dark);
         }
         catch { }
     }
@@ -771,22 +797,10 @@ public partial class MainWindow : FluentWindow
 
     private void TryApplyFluentBackdrop()
     {
-        try
-        {
-            ExtendsContentIntoTitleBar = true;
-            if (OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000))
-            {
-                if (WindowBackdrop.IsSupported(WindowBackdropType.Mica))
-                {
-                    WindowBackdrop.ApplyBackdrop(this, WindowBackdropType.Mica);
-                }
-                else
-                {
-                    WindowBackdrop.ApplyBackdrop(this, WindowBackdropType.Acrylic);
-                }
-            }
-        }
-        catch { }
+        bool isDark = string.Equals(UserSettingsStore.GetThemePreference(), "Dark", StringComparison.OrdinalIgnoreCase)
+            || (!string.Equals(UserSettingsStore.GetThemePreference(), "Light", StringComparison.OrdinalIgnoreCase)
+                && !UserSettingsStore.IsSystemAppsLightTheme());
+        StartupGuard.Themes.FluentBackdropHelper.ApplyMica(this, isDark);
     }
 
     private void LoadUserPreferences()
@@ -961,30 +975,6 @@ public partial class MainWindow : FluentWindow
 
                 var snapshot = await Task.Run(() =>
                 {
-                    if (UserSettingsStore.GetMd5ValidationEnabled())
-                    {
-                        try
-                        {
-                            var md5Auto = Md5RuleValidator.ValidateAndCleanObsoleteMd5Rules(_sqliteRepo);
-                            if (md5Auto.DeletedCount > 0)
-                            {
-                                SyncRulesBinaryAndNotifyService(_sqliteRepo);
-                            }
-                        }
-                        catch { }
-                    }
-                    else
-                    {
-                        try
-                        {
-                            if (Md5RuleValidator.BackfillMissingRuleMetadata(_sqliteRepo) > 0)
-                            {
-                                SyncRulesBinaryAndNotifyService(_sqliteRepo);
-                            }
-                        }
-                        catch { }
-                    }
-
                     var allItems = _startupManager.GetAllSystemStartupItems();
 
                     try
@@ -1034,12 +1024,27 @@ public partial class MainWindow : FluentWindow
                 {
                     _fileTypeCachedItems.Clear();
                 }
-                ApplyStartupFilter();
-                ApplyClassicMenuFilter();
-                ApplyAuditFilter();
-                RefreshRules();
-                RefreshLogs();
-                RefreshGlobalSearchResults();
+                if (string.Equals(_currentPageTag, "PageStartupManager", StringComparison.Ordinal))
+                {
+                    ApplyStartupFilter();
+                    _ = Dispatcher.InvokeAsync(() =>
+                    {
+                        ApplyClassicMenuFilter();
+                        ApplyAuditFilter();
+                        RefreshRules();
+                        RefreshLogs();
+                        RefreshGlobalSearchResults();
+                    }, System.Windows.Threading.DispatcherPriority.Background);
+                }
+                else
+                {
+                    ApplyStartupFilter();
+                    ApplyClassicMenuFilter();
+                    ApplyAuditFilter();
+                    RefreshRules();
+                    RefreshLogs();
+                    RefreshGlobalSearchResults();
+                }
 
                 if (sw != null && minimumOverlayMs > 0)
                 {
@@ -1707,6 +1712,91 @@ public partial class MainWindow : FluentWindow
         ApplyClassicMenuFilter();
     }
 
+    private void BtnNavBack_Click(object sender, RoutedEventArgs e)
+    {
+        TryNavigateBack();
+    }
+
+    private void MainWindow_PreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+    {
+        if (e.Key == System.Windows.Input.Key.System && e.SystemKey == System.Windows.Input.Key.Left &&
+            (System.Windows.Input.Keyboard.Modifiers & System.Windows.Input.ModifierKeys.Alt) == System.Windows.Input.ModifierKeys.Alt)
+        {
+            if (TryNavigateBack())
+            {
+                e.Handled = true;
+            }
+        }
+    }
+
+    private void MainWindow_MouseDown(object sender, System.Windows.Input.MouseButtonEventArgs e)
+    {
+        if (e.ChangedButton == System.Windows.Input.MouseButton.XButton1 && TryNavigateBack())
+        {
+            e.Handled = true;
+        }
+    }
+
+    private bool TryNavigateBack()
+    {
+        if (_navigationHistory.Count == 0)
+            return false;
+
+        string prevTag = _navigationHistory.Pop();
+        if (TranslateNavBack != null)
+        {
+            var nudge = new DoubleAnimationUsingKeyFrames();
+            nudge.KeyFrames.Add(new EasingDoubleKeyFrame(-4.0, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(70)), new CubicEase { EasingMode = EasingMode.EaseOut }));
+            nudge.KeyFrames.Add(new EasingDoubleKeyFrame(0.0, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(160)), new CubicEase { EasingMode = EasingMode.EaseOut }));
+            TranslateNavBack.BeginAnimation(TranslateTransform.XProperty, nudge);
+        }
+
+        _isNavigatingBack = true;
+        try
+        {
+            NavigateAndSelectPage(prevTag);
+        }
+        finally
+        {
+            _isNavigatingBack = false;
+        }
+        return true;
+    }
+
+    private void UpdateNavBackButtonState()
+    {
+        if (BtnNavBack == null) return;
+        bool canBack = _navigationHistory.Count > 0;
+        var winUiSpline = new KeySpline(0.1, 0.9, 0.2, 1.0);
+
+        if (canBack)
+        {
+            if (BtnNavBack.Visibility != Visibility.Visible)
+            {
+                BtnNavBack.Visibility = Visibility.Visible;
+                var fadeIn = new DoubleAnimationUsingKeyFrames();
+                fadeIn.KeyFrames.Add(new DiscreteDoubleKeyFrame(0.0, KeyTime.FromTimeSpan(TimeSpan.Zero)));
+                fadeIn.KeyFrames.Add(new SplineDoubleKeyFrame(1.0, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(167)), winUiSpline));
+                BtnNavBack.BeginAnimation(UIElement.OpacityProperty, fadeIn);
+
+                var slideIn = new ThicknessAnimationUsingKeyFrames();
+                slideIn.KeyFrames.Add(new DiscreteThicknessKeyFrame(new Thickness(-8, 0, 6, 0), KeyTime.FromTimeSpan(TimeSpan.Zero)));
+                slideIn.KeyFrames.Add(new SplineThicknessKeyFrame(new Thickness(0, 0, 6, 0), KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(167)), winUiSpline));
+                BtnNavBack.BeginAnimation(FrameworkElement.MarginProperty, slideIn);
+            }
+        }
+        else if (BtnNavBack.Visibility == Visibility.Visible)
+        {
+            var fadeOut = new DoubleAnimation(BtnNavBack.Opacity, 0.0, TimeSpan.FromMilliseconds(120));
+            fadeOut.Completed += (_, _) =>
+            {
+                if (_navigationHistory.Count == 0)
+                    BtnNavBack.Visibility = Visibility.Collapsed;
+            };
+            BtnNavBack.BeginAnimation(UIElement.OpacityProperty, fadeOut);
+        }
+    }
+
     private void SwitchToPage(string pageTag)
     {
         if (!_isInitialized || PageStartupManager == null || PageContextMenu == null || PageAuditCenter == null || PageLogs == null || PageSettings == null)
@@ -1718,6 +1808,16 @@ public partial class MainWindow : FluentWindow
             "PageRules" => "PageLogs",
             _ => pageTag
         };
+
+        if (!string.Equals(normalizedTag, _currentPageTag, StringComparison.Ordinal))
+        {
+            if (!_isNavigatingBack && !string.IsNullOrEmpty(_currentPageTag))
+            {
+                _navigationHistory.Push(_currentPageTag);
+            }
+            _currentPageTag = normalizedTag;
+        }
+        UpdateNavBackButtonState();
 
         var pages = new (string Tag, FrameworkElement Page)[]
         {
@@ -1736,21 +1836,21 @@ public partial class MainWindow : FluentWindow
                 {
                     page.Visibility = Visibility.Visible;
 
-                    // Microsoft Store 标准平滑页面进入动效 (Fade-in + Slide-up)
+                    // 采用 Margin 像素对齐滑入 + Opacity 淡入，避免 RenderTransform 亚像素插值导致切页瞬间文字发糊
                     try
                     {
-                        var fadeIn = new System.Windows.Media.Animation.DoubleAnimation(0.0, 1.0, TimeSpan.FromMilliseconds(200))
-                        {
-                            EasingFunction = new System.Windows.Media.Animation.CubicEase { EasingMode = System.Windows.Media.Animation.EasingMode.EaseOut }
-                        };
-                        var slideUp = new System.Windows.Media.Animation.DoubleAnimation(12.0, 0.0, TimeSpan.FromMilliseconds(200))
-                        {
-                            EasingFunction = new System.Windows.Media.Animation.CubicEase { EasingMode = System.Windows.Media.Animation.EasingMode.EaseOut }
-                        };
-                        var transform = new System.Windows.Media.TranslateTransform();
-                        page.RenderTransform = transform;
+                        page.RenderTransform = Transform.Identity;
+                        var winUiSpline = new KeySpline(0.1, 0.9, 0.2, 1.0);
+                        var fadeIn = new DoubleAnimationUsingKeyFrames();
+                        fadeIn.KeyFrames.Add(new DiscreteDoubleKeyFrame(0.35, KeyTime.FromTimeSpan(TimeSpan.Zero)));
+                        fadeIn.KeyFrames.Add(new SplineDoubleKeyFrame(1.0, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(150)), winUiSpline));
+
+                        var slideUp = new ThicknessAnimationUsingKeyFrames();
+                        slideUp.KeyFrames.Add(new DiscreteThicknessKeyFrame(new Thickness(0, 10, 0, 0), KeyTime.FromTimeSpan(TimeSpan.Zero)));
+                        slideUp.KeyFrames.Add(new SplineThicknessKeyFrame(new Thickness(0), KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(167)), winUiSpline));
+
                         page.BeginAnimation(UIElement.OpacityProperty, fadeIn);
-                        transform.BeginAnimation(System.Windows.Media.TranslateTransform.YProperty, slideUp);
+                        page.BeginAnimation(FrameworkElement.MarginProperty, slideUp);
                     }
                     catch { }
                 }
@@ -2270,30 +2370,20 @@ public partial class MainWindow : FluentWindow
     private static void PlayTabSwitchAnimation(UIElement? element)
     {
         if (element == null) return;
-        var storyboard = new Storyboard();
+        var winUiSpline = new KeySpline(0.1, 0.9, 0.2, 1.0);
+        var fadeIn = new DoubleAnimationUsingKeyFrames();
+        fadeIn.KeyFrames.Add(new DiscreteDoubleKeyFrame(0.4, KeyTime.FromTimeSpan(TimeSpan.Zero)));
+        fadeIn.KeyFrames.Add(new SplineDoubleKeyFrame(1.0, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(140)), winUiSpline));
+        element.BeginAnimation(UIElement.OpacityProperty, fadeIn);
 
-        var opacityAnim = new DoubleAnimation(0.35, 1.0, TimeSpan.FromMilliseconds(200))
+        if (element is FrameworkElement fe)
         {
-            EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut }
-        };
-        Storyboard.SetTarget(opacityAnim, element);
-        Storyboard.SetTargetProperty(opacityAnim, new PropertyPath("Opacity"));
-        storyboard.Children.Add(opacityAnim);
-
-        if (element.RenderTransform is not TranslateTransform)
-        {
-            element.RenderTransform = new TranslateTransform();
+            fe.RenderTransform = Transform.Identity;
+            var slide = new ThicknessAnimationUsingKeyFrames();
+            slide.KeyFrames.Add(new DiscreteThicknessKeyFrame(new Thickness(0, 8, 0, 0), KeyTime.FromTimeSpan(TimeSpan.Zero)));
+            slide.KeyFrames.Add(new SplineThicknessKeyFrame(new Thickness(0), KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(160)), winUiSpline));
+            fe.BeginAnimation(FrameworkElement.MarginProperty, slide);
         }
-
-        var slideAnim = new DoubleAnimation(10.0, 0.0, TimeSpan.FromMilliseconds(200))
-        {
-            EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut }
-        };
-        Storyboard.SetTarget(slideAnim, element);
-        Storyboard.SetTargetProperty(slideAnim, new PropertyPath("(UIElement.RenderTransform).(TranslateTransform.Y)"));
-        storyboard.Children.Add(slideAnim);
-
-        storyboard.Begin();
     }
 
     private void Filter_Checked(object sender, RoutedEventArgs e)
@@ -4975,18 +5065,17 @@ public partial class MainWindow : FluentWindow
     {
         setState?.Invoke(expand);
 
-        // 绝不使用 LayoutTransform.ScaleY 压扁/拉伸文字，改用 WinUI 3 Expander 式高度窗帘展开 + 轻滑入
+        // WinUI 3 Expander 标准 FastOutSlowIn 曲线 (0.1, 0.9, 0.2, 1.0)
+        var winUiSpline = new KeySpline(0.1, 0.9, 0.2, 1.0);
         container.LayoutTransform = Transform.Identity;
         if (container.RenderTransform is not TranslateTransform translateTransform)
         {
-            translateTransform = new TranslateTransform(0.0, expand ? -10.0 : 0.0);
+            translateTransform = new TranslateTransform(0.0, expand ? -12.0 : 0.0);
             container.RenderTransform = translateTransform;
         }
 
-        var rotateAnim = new DoubleAnimation(expand ? 180 : 0, TimeSpan.FromMilliseconds(200))
-        {
-            EasingFunction = new CubicEase { EasingMode = EasingMode.EaseInOut }
-        };
+        var rotateAnim = new DoubleAnimationUsingKeyFrames();
+        rotateAnim.KeyFrames.Add(new SplineDoubleKeyFrame(expand ? 180.0 : 0.0, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(167)), winUiSpline));
         chevron.BeginAnimation(RotateTransform.AngleProperty, rotateAnim);
 
         if (expand)
@@ -5006,27 +5095,33 @@ public partial class MainWindow : FluentWindow
             double targetHeight = Math.Max(container.DesiredSize.Height, 1.0);
 
             container.MaxHeight = startHeight;
-            var easeOut = new ExponentialEase { EasingMode = EasingMode.EaseOut, Exponent = 4.5 };
-            var heightAnim = new DoubleAnimation(startHeight, targetHeight, TimeSpan.FromMilliseconds(240))
-            {
-                EasingFunction = easeOut
-            };
+            var expandDur = KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(200));
+
+            var heightAnim = new DoubleAnimationUsingKeyFrames();
+            heightAnim.KeyFrames.Add(new DiscreteDoubleKeyFrame(startHeight, KeyTime.FromTimeSpan(TimeSpan.Zero)));
+            heightAnim.KeyFrames.Add(new SplineDoubleKeyFrame(targetHeight, expandDur, winUiSpline));
             heightAnim.Completed += (_, _) =>
             {
                 if (currentExpandedState())
                 {
                     container.BeginAnimation(FrameworkElement.MaxHeightProperty, null);
                     container.MaxHeight = double.PositiveInfinity;
+                    translateTransform.BeginAnimation(TranslateTransform.YProperty, null);
+                    translateTransform.Y = 0.0;
                 }
             };
 
+            var slideAnim = new DoubleAnimationUsingKeyFrames();
+            slideAnim.KeyFrames.Add(new DiscreteDoubleKeyFrame(startHeight > 0 ? translateTransform.Y : -12.0, KeyTime.FromTimeSpan(TimeSpan.Zero)));
+            slideAnim.KeyFrames.Add(new SplineDoubleKeyFrame(0.0, expandDur, winUiSpline));
+
+            var fadeIn = new DoubleAnimationUsingKeyFrames();
+            fadeIn.KeyFrames.Add(new DiscreteDoubleKeyFrame(startHeight > 0 ? container.Opacity : 0.0, KeyTime.FromTimeSpan(TimeSpan.Zero)));
+            fadeIn.KeyFrames.Add(new SplineDoubleKeyFrame(1.0, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(167)), winUiSpline));
+
             container.BeginAnimation(FrameworkElement.MaxHeightProperty, heightAnim);
-            translateTransform.BeginAnimation(
-                TranslateTransform.YProperty,
-                new DoubleAnimation(startHeight > 0 ? translateTransform.Y : -10.0, 0.0, TimeSpan.FromMilliseconds(240)) { EasingFunction = easeOut });
-            container.BeginAnimation(
-                UIElement.OpacityProperty,
-                new DoubleAnimation(1.0, TimeSpan.FromMilliseconds(180)) { EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut } });
+            translateTransform.BeginAnimation(TranslateTransform.YProperty, slideAnim);
+            container.BeginAnimation(UIElement.OpacityProperty, fadeIn);
         }
         else
         {
@@ -5044,12 +5139,11 @@ public partial class MainWindow : FluentWindow
 
             container.BeginAnimation(FrameworkElement.MaxHeightProperty, null);
             container.MaxHeight = startHeight;
+            var collapseDur = KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(167));
 
-            var easeIn = new CubicEase { EasingMode = EasingMode.EaseIn };
-            var collapseAnim = new DoubleAnimation(startHeight, 0.0, TimeSpan.FromMilliseconds(190))
-            {
-                EasingFunction = easeIn
-            };
+            var collapseAnim = new DoubleAnimationUsingKeyFrames();
+            collapseAnim.KeyFrames.Add(new DiscreteDoubleKeyFrame(startHeight, KeyTime.FromTimeSpan(TimeSpan.Zero)));
+            collapseAnim.KeyFrames.Add(new SplineDoubleKeyFrame(0.0, collapseDur, winUiSpline));
             collapseAnim.Completed += (_, _) =>
             {
                 if (!currentExpandedState())
@@ -5058,9 +5152,15 @@ public partial class MainWindow : FluentWindow
                 }
             };
 
+            var slideUp = new DoubleAnimationUsingKeyFrames();
+            slideUp.KeyFrames.Add(new SplineDoubleKeyFrame(-12.0, collapseDur, winUiSpline));
+
+            var fadeOut = new DoubleAnimationUsingKeyFrames();
+            fadeOut.KeyFrames.Add(new SplineDoubleKeyFrame(0.0, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(130)), winUiSpline));
+
             container.BeginAnimation(FrameworkElement.MaxHeightProperty, collapseAnim);
-            translateTransform.BeginAnimation(TranslateTransform.YProperty, new DoubleAnimation(-10.0, TimeSpan.FromMilliseconds(190)) { EasingFunction = easeIn });
-            container.BeginAnimation(UIElement.OpacityProperty, new DoubleAnimation(0.0, TimeSpan.FromMilliseconds(140)) { EasingFunction = easeIn });
+            translateTransform.BeginAnimation(TranslateTransform.YProperty, slideUp);
+            container.BeginAnimation(UIElement.OpacityProperty, fadeOut);
         }
     }
 

@@ -332,14 +332,53 @@ public sealed unsafe partial class SystemStateSnapshotDiffer
     }
 
     /// <summary>
-    /// 更新内存快照中指定条目的状态，使其与实际回滚结果保持同步
+    /// 更新内存快照中指定条目的状态，使其与实际回滚/恢复结果保持同步（保留现有 Scene/Clsid 等元数据令牌）
     /// </summary>
     public void UpdateSnapshotItemState(string locationKey, string newRawState)
     {
+        if (string.IsNullOrWhiteSpace(locationKey))
+            return;
+
         if (_cachedSnapshot.TryGetValue(locationKey, out var existing))
         {
-            _cachedSnapshot[locationKey] = new SnapshotItem(existing.Category, existing.LocationKey, existing.CommandOrBinaryPath, newRawState, existing.RegistryValueType, existing.RawBytes, existing.DisplayName);
+            string merged = MergeRawStatePreservingMetadata(existing.RawState, newRawState);
+            _cachedSnapshot[locationKey] = new SnapshotItem(existing.Category, existing.LocationKey, existing.CommandOrBinaryPath, merged, existing.RegistryValueType, existing.RawBytes, existing.DisplayName);
         }
+    }
+
+    public void UpdateContextMenuEnabledInSnapshot(string locationKey, bool enabled)
+    {
+        if (string.IsNullOrWhiteSpace(locationKey))
+            return;
+
+        if (_cachedSnapshot.TryGetValue(locationKey, out var existing))
+        {
+            string updated = ReplaceEnabledToken(existing.RawState, enabled);
+            _cachedSnapshot[locationKey] = new SnapshotItem(existing.Category, existing.LocationKey, existing.CommandOrBinaryPath, updated, existing.RegistryValueType, existing.RawBytes, existing.DisplayName);
+        }
+
+        string directClsid = PrivilegedRollbackEngine.ExtractClsidOrIdentifier(locationKey);
+        if (directClsid.StartsWith('{') && directClsid.EndsWith('}') && IsGlobalClsidTargetKey(locationKey))
+        {
+            foreach (var kv in _cachedSnapshot.ToArray())
+            {
+                if (kv.Value.Category == MonitorCategory.ModernContextMenu &&
+                    kv.Key.Contains(directClsid, StringComparison.OrdinalIgnoreCase))
+                {
+                    string updated = ReplaceEnabledToken(kv.Value.RawState, enabled);
+                    _cachedSnapshot[kv.Key] = new SnapshotItem(kv.Value.Category, kv.Value.LocationKey, kv.Value.CommandOrBinaryPath, updated, kv.Value.RegistryValueType, kv.Value.RawBytes, kv.Value.DisplayName);
+                }
+            }
+        }
+    }
+
+    private static string MergeRawStatePreservingMetadata(string oldRawState, string newRawState)
+    {
+        if (string.Equals(newRawState, "Enabled=True", StringComparison.OrdinalIgnoreCase))
+            return ReplaceEnabledToken(oldRawState, true);
+        if (string.Equals(newRawState, "Enabled=False", StringComparison.OrdinalIgnoreCase))
+            return ReplaceEnabledToken(oldRawState, false);
+        return newRawState;
     }
 
     /// <summary>
@@ -472,7 +511,10 @@ public sealed unsafe partial class SystemStateSnapshotDiffer
                 }
                 else if (!string.Equals(existing.RawState, live.RawState, StringComparison.OrdinalIgnoreCase))
                 {
-                    changedList.Add((live, existing));
+                    // 若前后均处于已启用状态（仅 Scene/描述文本等元数据差异），静默吸收至基线，不重复触发拦截弹窗
+                    bool bothEnabled = TryParseLiveEnabledState(existing) == true && TryParseLiveEnabledState(live) == true;
+                    if (!bothEnabled)
+                        changedList.Add((live, existing));
                 }
             }
 
@@ -523,8 +565,12 @@ public sealed unsafe partial class SystemStateSnapshotDiffer
                     }
                     else if (!string.Equals(existing.RawState, live.RawState, StringComparison.OrdinalIgnoreCase))
                     {
-                        changedList.Add((live, existing));
-                        trackedKeys.Add(live.LocationKey);
+                        bool bothEnabled = TryParseLiveEnabledState(existing) == true && TryParseLiveEnabledState(live) == true;
+                        if (!bothEnabled)
+                        {
+                            changedList.Add((live, existing));
+                            trackedKeys.Add(live.LocationKey);
+                        }
                     }
                 }
             }

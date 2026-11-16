@@ -2315,12 +2315,12 @@ public class Feedback12BatchTests
         string diffXaml = File.ReadAllText(Path.Combine(repoRoot, "src", "StartupGuard.TrayHost", "InterceptionDiffDialogWindow.xaml"));
         string iss = File.ReadAllText(Path.Combine(repoRoot, "installer", "StartupGuard.iss"));
 
-        // 1. 字体 ClearType 与像素对齐契约：两套主窗体启用 Ideal DirectWrite + ClearType + ClearTypeHint + UseLayoutRounding 且无小数像素字号、无过度 Bold 粗体
+        // 1. 字体 ClearType 与像素对齐契约：两套主窗体启用 Display + ClearType + ClearTypeHint + UseLayoutRounding 且无小数像素字号、无过度 Bold 粗体
         foreach (string xaml in new[] { mainXaml, diffXaml })
         {
             Assert.Contains("UseLayoutRounding=\"True\"", xaml);
             Assert.Contains("SnapsToDevicePixels=\"True\"", xaml);
-            Assert.Contains("TextOptions.TextFormattingMode=\"Ideal\"", xaml);
+            Assert.Contains("TextOptions.TextFormattingMode=\"Display\"", xaml);
             Assert.Contains("TextOptions.TextRenderingMode=\"ClearType\"", xaml);
             Assert.Contains("RenderOptions.ClearTypeHint=\"Enabled\"", xaml);
             Assert.Contains("FontFamily=\"{DynamicResource AppFont}\"", xaml);
@@ -2357,10 +2357,16 @@ public class Feedback12BatchTests
         Assert.Contains("FontFamily=\"{DynamicResource AppFont}\"", diffXaml);
         Assert.Contains("<ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>", trayCsproj);
         Assert.Contains("FluentSharedStyles.xaml", trayCsproj);
+        Assert.Contains("FluentBackdropHelper.cs", trayCsproj);
         Assert.Contains("FluentComboBoxBehavior.cs", trayCsproj);
-        Assert.Contains("FluentFontHelper.cs", trayCsproj);
         Assert.Contains("FluentScrollBarBehavior.cs", trayCsproj);
+        Assert.DoesNotContain("FluentFontHelper", trayCsproj);
         Assert.Contains("Themes/FluentSharedStyles.xaml", trayCs);
+        Assert.Contains("ShowTrayContextMenuAtCursor", trayCs);
+        Assert.Contains("SetForegroundWindow", trayCs);
+        Assert.Contains("BtnNavBack", mainXaml);
+        Assert.Contains("_navigationHistory", mainCs);
+        Assert.Contains("FluentBackdropHelper.ApplyMica", mainCs);
 
         Assert.Contains("FluentComboBoxBehavior.IsEnabled", sharedStyles);
         Assert.Contains("FluentScrollBarBehavior.IsEnabled", sharedStyles);

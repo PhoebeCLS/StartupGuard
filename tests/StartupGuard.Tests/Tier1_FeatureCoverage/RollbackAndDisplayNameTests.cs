@@ -124,19 +124,45 @@ public class RollbackAndDisplayNameTests
     public void UserSettingsStore_ContextMenuPromptMode_DefaultIsFalse()
     {
         // 默认先拦截后审核模式 (ContextMenuManager 规范)
-        bool defaultMode = StartupGuard.Core.Configuration.UserSettingsStore.GetContextMenuPromptMode();
-        // 默认或已持久化值为布尔值且不抛异常
-        Assert.False(defaultMode);
+        string dir = AppContext.BaseDirectory;
+        while (!File.Exists(Path.Combine(dir, "StartupGuard.slnx")))
+        {
+            dir = Directory.GetParent(dir)?.FullName
+                ?? throw new DirectoryNotFoundException("Repository root containing StartupGuard.slnx not found.");
+        }
+        string storeCode = File.ReadAllText(Path.Combine(dir, "src", "StartupGuard.Core", "Configuration", "UserSettingsStore.cs"));
+        Assert.Contains("ReadBoolSetting(\"ContextMenuPromptMode\", legacyKey: null, defaultValue: false", storeCode);
+
+        bool original = StartupGuard.Core.Configuration.UserSettingsStore.GetContextMenuPromptMode();
+        try
+        {
+            StartupGuard.Core.Configuration.UserSettingsStore.SetContextMenuPromptMode(false);
+            Assert.False(StartupGuard.Core.Configuration.UserSettingsStore.GetContextMenuPromptMode());
+            StartupGuard.Core.Configuration.UserSettingsStore.SetContextMenuPromptMode(true);
+            Assert.True(StartupGuard.Core.Configuration.UserSettingsStore.GetContextMenuPromptMode());
+        }
+        finally
+        {
+            StartupGuard.Core.Configuration.UserSettingsStore.SetContextMenuPromptMode(original);
+        }
     }
 
     [Fact]
     public void UserSettingsStore_ThemePreference_Roundtrip()
     {
-        StartupGuard.Core.Configuration.UserSettingsStore.SetThemePreference("Dark");
-        string theme = StartupGuard.Core.Configuration.UserSettingsStore.GetThemePreference();
-        Assert.Equal("Dark", theme);
+        string originalTheme = StartupGuard.Core.Configuration.UserSettingsStore.GetThemePreference();
+        try
+        {
+            StartupGuard.Core.Configuration.UserSettingsStore.SetThemePreference("Dark");
+            string theme = StartupGuard.Core.Configuration.UserSettingsStore.GetThemePreference();
+            Assert.Equal("Dark", theme);
 
-        StartupGuard.Core.Configuration.UserSettingsStore.SetThemePreference("System");
-        Assert.Equal("System", StartupGuard.Core.Configuration.UserSettingsStore.GetThemePreference());
+            StartupGuard.Core.Configuration.UserSettingsStore.SetThemePreference("System");
+            Assert.Equal("System", StartupGuard.Core.Configuration.UserSettingsStore.GetThemePreference());
+        }
+        finally
+        {
+            StartupGuard.Core.Configuration.UserSettingsStore.SetThemePreference(originalTheme);
+        }
     }
 }

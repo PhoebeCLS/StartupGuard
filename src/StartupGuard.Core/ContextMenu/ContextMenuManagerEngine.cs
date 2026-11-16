@@ -2455,6 +2455,11 @@ public sealed unsafe partial class ContextMenuManagerEngine
 
             foreach (string valName in blockedKey.GetValueNames())
             {
+                // 仅清理确由 StartupGuard 写入的屏蔽值，避免误删系统或第三方工具写入的拦截键
+                string? valData = blockedKey.GetValue(valName)?.ToString();
+                if (string.IsNullOrEmpty(valData) || !valData.Contains("StartupGuard", StringComparison.OrdinalIgnoreCase))
+                    continue;
+
                 if (!ContextMenuGuidResolver.TryParseGuid(valName, out Guid g) || g == Guid.Empty)
                     continue;
                 string normalized = $"{g:B}";
@@ -2518,13 +2523,21 @@ public sealed unsafe partial class ContextMenuManagerEngine
 
         string normalized = clsid.StartsWith('{') ? clsid : $"{{{clsid}}}";
 
-        // PackagedCom 检查
-        using (var hklmPkg = Microsoft.Win32.Registry.LocalMachine.OpenSubKey($@"SOFTWARE\Classes\PackagedCom\ClassIndex\{normalized}", false))
+        // PackagedCom 检查（同时兼容带 "--" 禁用后缀的 ClassIndex 键；PackageFullName 位于子键名）
+        foreach (string candidateIdx in new[]
         {
+            $@"SOFTWARE\Classes\PackagedCom\ClassIndex\{normalized}",
+            $@"SOFTWARE\Classes\PackagedCom\ClassIndex\{normalized}--"
+        })
+        {
+            using var hklmPkg = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(candidateIdx, false);
             if (hklmPkg != null)
             {
-                string pkgId = hklmPkg.GetValueNames().FirstOrDefault() ?? hklmPkg.GetSubKeyNames().FirstOrDefault() ?? string.Empty;
+                string pkgId = hklmPkg.GetSubKeyNames().FirstOrDefault() ?? hklmPkg.GetValueNames().FirstOrDefault() ?? string.Empty;
                 if (string.IsNullOrEmpty(pkgId))
+                    return true;
+                using var pkgReg = Microsoft.Win32.Registry.LocalMachine.OpenSubKey($@"SOFTWARE\Classes\PackagedCom\Package\{pkgId}", false);
+                if (pkgReg != null)
                     return true;
                 string dll = ResolvePackagedComServerBinary(PrivilegedRollbackEngine.HKEY_LOCAL_MACHINE, pkgId, normalized);
                 return string.IsNullOrEmpty(dll) || File.Exists(dll);

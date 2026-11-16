@@ -959,7 +959,7 @@ public static class Program
             if (target.Category is MonitorCategory.ClassicContextMenu or MonitorCategory.ModernContextMenu)
             {
                 _differ.SyncMovedContextMenuSnapshot(target.LocationKeyOrIdentifier, disabled: action != InterceptionAction.Allow);
-                _differ.UpdateSnapshotItemState(target.LocationKeyOrIdentifier, $"Enabled={action == InterceptionAction.Allow}");
+                _differ.UpdateContextMenuEnabledInSnapshot(target.LocationKeyOrIdentifier, action == InterceptionAction.Allow);
             }
             else
             {
@@ -1381,6 +1381,24 @@ public static class Program
                                     verified = PrivilegedRollbackEngine.VerifyRollbackState(target, mutation.Action, _activeInteractiveUserSid);
                                 }
 
+                                if (verified || execOk)
+                                {
+                                    if (mutation.Category is MonitorCategory.ClassicContextMenu or MonitorCategory.ModernContextMenu)
+                                    {
+                                        bool enabled = mutation.Action == InterceptionAction.Allow;
+                                        _differ.SyncMovedContextMenuSnapshot(mutation.LocationKey, disabled: !enabled);
+                                        _differ.UpdateContextMenuEnabledInSnapshot(mutation.LocationKey, enabled);
+                                    }
+                                    else if (mutation.Action == InterceptionAction.Allow)
+                                    {
+                                        string restoredState = mutation.Category == MonitorCategory.StartupItem &&
+                                            PrivilegedRollbackEngine.IsUwpStartupLocation(mutation.LocationKey)
+                                            ? "Enabled=True"
+                                            : "Start: 2, Delayed: False";
+                                        _differ.UpdateSnapshotItemState(mutation.LocationKey, restoredState);
+                                    }
+                                }
+
                                 SharedStorageHelper.LogDiagnostic("PipeManualMutation",
                                     $"cat={mutation.Category} act={mutation.Action} loc={mutation.LocationKey} execOk={execOk} verified={verified} sid={_activeInteractiveUserSid ?? "-"}");
 
@@ -1580,6 +1598,12 @@ public static class Program
                 _rulesCacheDirty = false;
                 var updated = refreshed.Select(MmfRecordEntry.FromRule).ToArray();
                 _rulesMmf.SaveEntriesAtomically(updated);
+            }
+
+            if (cleanedBlocks > 0)
+            {
+                _differ.RefreshCategoryBaseline(MonitorCategory.ClassicContextMenu, _activeInteractiveUserSid, _contextMenuEngine);
+                _differ.RefreshCategoryBaseline(MonitorCategory.ModernContextMenu, _activeInteractiveUserSid, _contextMenuEngine);
             }
 
             if (cleanedBlocks > 0 || removedRules > 0)

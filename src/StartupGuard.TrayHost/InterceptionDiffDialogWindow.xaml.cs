@@ -102,25 +102,21 @@ public partial class InterceptionDiffDialogWindow : FluentWindow
         ConfidenceEvaluationResult initialEval,
         Action<IReadOnlyList<UserDecisionPayload>> onBatchDecisionMade)
     {
-        StartupGuard.Themes.FluentFontHelper.ApplyPreferredFont(this);
         InitializeComponent();
         _onBatchDecisionMade = onBatchDecisionMade;
         CardsItemsControl.ItemsSource = _capturedItems;
 
         AppendCapturedItem(correlationId, initialEval);
 
+        SourceInitialized += (_, _) =>
+        {
+            StartupGuard.Themes.FluentBackdropHelper.ApplyMica(this, !UserSettingsStore.IsEffectiveLightTheme());
+        };
+
         Loaded += (_, _) =>
         {
             ApplyConfiguredTheme();
             Microsoft.Win32.SystemEvents.UserPreferenceChanged += OnSystemUserPreferenceChanged;
-            try
-            {
-                if (OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000) && WindowBackdrop.IsSupported(WindowBackdropType.Mica))
-                {
-                    WindowBackdrop.ApplyBackdrop(this, WindowBackdropType.Mica);
-                }
-            }
-            catch { }
         };
 
         Closed += (_, _) =>
@@ -151,14 +147,12 @@ public partial class InterceptionDiffDialogWindow : FluentWindow
     {
         try
         {
-            ApplicationTheme theme = UserSettingsStore.IsEffectiveLightTheme()
+            bool isLight = UserSettingsStore.IsEffectiveLightTheme();
+            ApplicationTheme theme = isLight
                 ? ApplicationTheme.Light
                 : ApplicationTheme.Dark;
             ApplicationThemeManager.Apply(theme, WindowBackdropType.Mica, true);
-            if (OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000) && WindowBackdrop.IsSupported(WindowBackdropType.Mica))
-            {
-                WindowBackdrop.ApplyBackdrop(this, WindowBackdropType.Mica);
-            }
+            StartupGuard.Themes.FluentBackdropHelper.ApplyMica(this, !isLight);
         }
         catch { }
     }

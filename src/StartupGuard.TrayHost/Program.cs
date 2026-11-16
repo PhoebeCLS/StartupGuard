@@ -28,6 +28,10 @@ internal static partial class Program
     [return: MarshalAs(UnmanagedType.Bool)]
     internal static partial bool DestroyIcon(nint hIcon);
 
+    [LibraryImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static partial bool SetForegroundWindow(nint hWnd);
+
     public static bool CheckIsD3DFullScreenGame()
     {
         if (!OperatingSystem.IsWindows()) return false;
@@ -86,7 +90,6 @@ internal static partial class Program
             {
                 Source = new Uri("pack://application:,,,/Themes/FluentSharedStyles.xaml", UriKind.Absolute)
             });
-            StartupGuard.Themes.FluentFontHelper.ApplyPreferredFont();
         }
         catch { }
     }
@@ -126,6 +129,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
     private readonly GameModeDebounceController _gameModeController;
     private readonly SynchronizationContext? _syncContext;
     private InterceptionDiffDialogWindow? _currentDialog;
+    private bool _lastMenuIsLight;
 
     public TrayApplicationContext()
     {
@@ -136,6 +140,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
 
         // 2. 构建现代视觉轻量原生右键菜单 (纯 GDI+ 自定义渲染，深浅主题自适应，零 WPF 驻留开销)
         bool isLight = Program.IsSystemLightTheme();
+        _lastMenuIsLight = isLight;
         _contextMenu = new ContextMenuStrip
         {
             ShowCheckMargin = true,
@@ -174,16 +179,21 @@ internal sealed class TrayApplicationContext : ApplicationContext
         _itemExit = new ToolStripMenuItem("退出") { Padding = new Padding(2, 3, 6, 3) };
         _itemExit.Click += (_, _) => ExitApplication();
         _contextMenu.Items.Add(_itemExit);
-        ApplyContextMenuTheme(isLight);
-        _contextMenu.Opening += (_, _) => ApplyContextMenuTheme(Program.IsSystemLightTheme());
+        ApplyContextMenuTheme(isLight, force: true);
 
-        // 3. 构建 Shell_NotifyIconW 托盘图标
+        // 3. 构建 Shell_NotifyIconW 托盘图标（Win11 托盘及折叠区右键采用 MouseUp + SetForegroundWindow 显式弹出）
         _notifyIcon = new NotifyIcon
         {
             Text = "StartupGuard 守护已启用",
             Icon = CreateDefaultShieldIcon(),
-            ContextMenuStrip = _contextMenu,
             Visible = true
+        };
+        _notifyIcon.MouseUp += (_, e) =>
+        {
+            if (e.Button == MouseButtons.Right)
+            {
+                ShowTrayContextMenuAtCursor();
+            }
         };
         _notifyIcon.DoubleClick += (_, _) => LaunchMainRuleManagerApp();
 
@@ -192,8 +202,31 @@ internal sealed class TrayApplicationContext : ApplicationContext
         Task.Run(() => RunNotificationPacingLoopAsync(_cts.Token));
     }
 
-    private void ApplyContextMenuTheme(bool isLight)
+    private void ShowTrayContextMenuAtCursor()
     {
+        try
+        {
+            ApplyContextMenuTheme(Program.IsSystemLightTheme());
+            nint hwnd = _contextMenu.Handle;
+            if (hwnd != 0)
+            {
+                Program.SetForegroundWindow(hwnd);
+            }
+            _contextMenu.Show(Cursor.Position);
+            if (_contextMenu.Handle != 0)
+            {
+                Program.SetForegroundWindow(_contextMenu.Handle);
+            }
+        }
+        catch { }
+    }
+
+    private void ApplyContextMenuTheme(bool isLight, bool force = false)
+    {
+        if (!force && _lastMenuIsLight == isLight)
+            return;
+
+        _lastMenuIsLight = isLight;
         Color backColor = isLight ? Color.FromArgb(0xFC, 0xFC, 0xFC) : Color.FromArgb(0x2B, 0x2B, 0x2E);
         Color foreColor = isLight ? Color.FromArgb(0x1E, 0x1E, 0x1E) : Color.FromArgb(0xF3, 0xF3, 0xF3);
 

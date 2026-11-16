@@ -12,21 +12,25 @@
         <Setter Property="UseLayoutRounding" Value="True" />
         <Setter Property="SnapsToDevicePixels" Value="True" />
         <Setter Property="RenderOptions.ClearTypeHint" Value="Enabled" />
-        <Setter Property="TextOptions.TextFormattingMode" Value="Ideal" />
+        <Setter Property="TextOptions.TextFormattingMode" Value="Display" />
         <Setter Property="TextOptions.TextRenderingMode" Value="ClearType" />
+        <Setter Property="FontFamily" Value="{DynamicResource AppFont}" />
         <Setter Property="FontWeight" Value="Normal" />
-        <Setter Property="Padding" Value="10,6" />
-        <Setter Property="MinHeight" Value="30" />
+        <Setter Property="Padding" Value="11,5" />
+        <Setter Property="Margin" Value="3,1" />
+        <Setter Property="MinHeight" Value="32" />
     </Style>
 
     <Style TargetType="{x:Type ComboBox}" BasedOn="{StaticResource {x:Type ComboBox}}">
         <Setter Property="UseLayoutRounding" Value="True" />
         <Setter Property="SnapsToDevicePixels" Value="True" />
         <Setter Property="RenderOptions.ClearTypeHint" Value="Enabled" />
-        <Setter Property="TextOptions.TextFormattingMode" Value="Ideal" />
+        <Setter Property="TextOptions.TextFormattingMode" Value="Display" />
         <Setter Property="TextOptions.TextRenderingMode" Value="ClearType" />
+        <Setter Property="FontFamily" Value="{DynamicResource AppFont}" />
         <Setter Property="FontWeight" Value="Normal" />
         <Setter Property="MinHeight" Value="32" />
+        <Setter Property="Padding" Value="11,5" />
         <Setter Property="VerticalContentAlignment" Value="Center" />
         <Setter Property="themes:FluentComboBoxBehavior.IsEnabled" Value="True" />
         <Setter Property="Template">
@@ -140,7 +144,7 @@
                                            VerticalOffset="0">
                                         <Border x:Name="PopupShadowHost"
                                                 Background="{x:Null}"
-                                                Padding="14,12,14,16"
+                                                Padding="14,10,14,14"
                                                 UseLayoutRounding="True"
                                                 SnapsToDevicePixels="True"
                                                 RenderOptions.ClearTypeHint="Enabled"
@@ -154,11 +158,11 @@
                                                         IsHitTestVisible="False"
                                                         Opacity="0">
                                                     <Border.Effect>
-                                                        <DropShadowEffect BlurRadius="22"
+                                                        <DropShadowEffect BlurRadius="16"
                                                                           Color="#000000"
                                                                           Direction="270"
-                                                                          Opacity="0.28"
-                                                                          ShadowDepth="6" />
+                                                                          Opacity="0.16"
+                                                                          ShadowDepth="4" />
                                                     </Border.Effect>
                                                 </Border>
 
@@ -166,7 +170,7 @@
                                                 <Border x:Name="DropDownBorder"
                                                         MinWidth="{TemplateBinding ActualWidth}"
                                                         Margin="0"
-                                                        Padding="2,4"
+                                                        Padding="1,4"
                                                         Background="{DynamicResource ComboBoxDropDownBackground}"
                                                         BorderBrush="{DynamicResource ComboBoxDropDownBorderBrush}"
                                                         BorderThickness="1"
@@ -178,14 +182,22 @@
                                                         <ui:DynamicScrollViewer x:Name="DropDownScrollViewer"
                                                                                 MaxHeight="{TemplateBinding MaxDropDownHeight}"
                                                                                 Margin="0"
+                                                                                FontFamily="{TemplateBinding FontFamily}"
                                                                                 FontSize="{TemplateBinding FontSize}"
-                                                                                FontWeight="{TemplateBinding FontWeight}"
+                                                                                FontWeight="Normal"
                                                                                 Foreground="{TemplateBinding Foreground}"
                                                                                 HorizontalScrollBarVisibility="{TemplateBinding ScrollViewer.HorizontalScrollBarVisibility}"
                                                                                 SnapsToDevicePixels="True"
                                                                                 VerticalScrollBarVisibility="{TemplateBinding ScrollViewer.VerticalScrollBarVisibility}">
-                                                            <ItemsPresenter KeyboardNavigation.DirectionalNavigation="Contained"
-                                                                            TextElement.FontSize="{TemplateBinding FontSize}" />
+                                                            <ItemsPresenter x:Name="DropDownItemsPresenter"
+                                                                            KeyboardNavigation.DirectionalNavigation="Contained"
+                                                                            TextElement.FontFamily="{TemplateBinding FontFamily}"
+                                                                            TextElement.FontSize="{TemplateBinding FontSize}"
+                                                                            TextElement.FontWeight="Normal">
+                                                                <ItemsPresenter.RenderTransform>
+                                                                    <TranslateTransform x:Name="ItemsSlideTransform" Y="0" />
+                                                                </ItemsPresenter.RenderTransform>
+                                                            </ItemsPresenter>
                                                         </ui:DynamicScrollViewer>
                                                     </Grid>
                                                 </Border>

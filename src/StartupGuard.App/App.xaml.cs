@@ -81,7 +81,6 @@ public partial class App : Application
         }
 
         base.OnStartup(e);
-        StartupGuard.Themes.FluentFontHelper.ApplyPreferredFont();
         try
         {
             string themePref = StartupGuard.Core.Configuration.UserSettingsStore.GetThemePreference();
@@ -139,6 +138,8 @@ public partial class App : Application
                 UseLayoutRounding = true,
                 SnapsToDevicePixels = true
             };
+            win.SourceInitialized += (_, _) => StartupGuard.Themes.FluentBackdropHelper.ApplyMica(
+                win, !StartupGuard.Core.Configuration.UserSettingsStore.IsSystemAppsLightTheme());
             TextOptions.SetTextFormattingMode(win, TextFormattingMode.Display);
             TextOptions.SetTextRenderingMode(win, TextRenderingMode.ClearType);
             RenderOptions.SetClearTypeHint(win, ClearTypeHint.Enabled);

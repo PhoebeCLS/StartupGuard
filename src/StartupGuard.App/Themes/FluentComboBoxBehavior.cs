@@ -202,15 +202,16 @@ public static partial class FluentComboBoxBehavior
 
         var clipGeometry = new RectangleGeometry(startRect, 8.0, 8.0);
         dropDownBorder.Clip = clipGeometry;
+        dropDownBorder.BeginAnimation(UIElement.OpacityProperty, null);
+        dropDownBorder.Opacity = 1.0;
 
-        // WinUI 3 Decelerate 曲线（快启慢收，不拉伸文字）
-        var revealEase = new ExponentialEase { EasingMode = EasingMode.EaseOut, Exponent = 5.0 };
-        var fadeEase = new CubicEase { EasingMode = EasingMode.EaseOut };
+        // WinUI 3 SplitOpenThemeAnimation 标准 KeySpline(0.1, 0.9, 0.2, 1.0)
+        var winUiSpline = new KeySpline(0.1, 0.9, 0.2, 1.0);
+        var duration = TimeSpan.FromMilliseconds(167);
 
-        var rectAnim = new RectAnimation(startRect, fullRect, TimeSpan.FromMilliseconds(220))
-        {
-            EasingFunction = revealEase
-        };
+        var rectAnim = new RectAnimationUsingKeyFrames();
+        rectAnim.KeyFrames.Add(new DiscreteRectKeyFrame(startRect, KeyTime.FromTimeSpan(TimeSpan.Zero)));
+        rectAnim.KeyFrames.Add(new SplineRectKeyFrame(fullRect, KeyTime.FromTimeSpan(duration), winUiSpline));
         rectAnim.Completed += (_, _) =>
         {
             if (dropDownBorder.Clip == clipGeometry)
@@ -219,19 +220,32 @@ public static partial class FluentComboBoxBehavior
             }
         };
 
-        var borderFade = new DoubleAnimation(0.25, 1.0, TimeSpan.FromMilliseconds(120))
-        {
-            EasingFunction = fadeEase
-        };
-
-        dropDownBorder.BeginAnimation(UIElement.OpacityProperty, borderFade);
         clipGeometry.BeginAnimation(RectangleGeometry.RectProperty, rectAnim);
+
+        if (comboBox.Template?.FindName("ItemsSlideTransform", comboBox) is TranslateTransform itemsSlide)
+        {
+            double midRatio = fullHeight > 0 ? anchorCenterInBorder / fullHeight : 0.5;
+            double slideFrom = midRatio < 0.35 ? -8.0 : (midRatio > 0.65 ? 8.0 : 0.0);
+            itemsSlide.BeginAnimation(TranslateTransform.YProperty, null);
+            if (Math.Abs(slideFrom) > 0.5)
+            {
+                var slideAnim = new DoubleAnimationUsingKeyFrames();
+                slideAnim.KeyFrames.Add(new DiscreteDoubleKeyFrame(slideFrom, KeyTime.FromTimeSpan(TimeSpan.Zero)));
+                slideAnim.KeyFrames.Add(new SplineDoubleKeyFrame(0.0, KeyTime.FromTimeSpan(duration), winUiSpline));
+                itemsSlide.BeginAnimation(TranslateTransform.YProperty, slideAnim);
+            }
+            else
+            {
+                itemsSlide.Y = 0.0;
+            }
+        }
 
         if (dropDownShadow != null)
         {
-            dropDownShadow.BeginAnimation(
-                UIElement.OpacityProperty,
-                new DoubleAnimation(0.0, 1.0, TimeSpan.FromMilliseconds(180)) { EasingFunction = fadeEase });
+            var shadowAnim = new DoubleAnimationUsingKeyFrames();
+            shadowAnim.KeyFrames.Add(new DiscreteDoubleKeyFrame(0.0, KeyTime.FromTimeSpan(TimeSpan.Zero)));
+            shadowAnim.KeyFrames.Add(new SplineDoubleKeyFrame(1.0, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(140)), winUiSpline));
+            dropDownShadow.BeginAnimation(UIElement.OpacityProperty, shadowAnim);
         }
     }
 
