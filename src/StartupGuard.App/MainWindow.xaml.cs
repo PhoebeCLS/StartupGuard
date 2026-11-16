@@ -2770,8 +2770,13 @@ public partial class MainWindow : FluentWindow
             {
                 // 操作未生效时必须把绑定属性与开关 UI 立即回退为真实系统状态，防止下次刷新前呈现假“开启”
                 item.IsEnabled = !targetState;
-                item.StatusSummary = !targetState ? "已启用" : "已禁止/屏蔽";
+                item.StatusSummary = string.Equals(item.ScopeScene, "Scene_GuidBlocked", StringComparison.OrdinalIgnoreCase)
+                    ? (!targetState ? "已锁定阻止" : "已解除锁定")
+                    : (!targetState ? "已启用" : "已禁止/屏蔽");
                 toggle.IsChecked = !targetState;
+                await ShowWinUiInfoDialogAsync(
+                    "状态变更未生效",
+                    $"无法修改“{item.DisplayName}”的注册表或系统策略状态（若为全局 HKLM 锁定项，请确认 StartupGuard 后台服务正在运行或以管理员身份运行）。");
             }
         }
         finally

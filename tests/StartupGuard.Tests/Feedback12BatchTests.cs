@@ -375,6 +375,70 @@ public class Feedback12BatchTests
     }
 
     [Fact]
+    public void ParseAppxManifestModernMenus_FiltersNonMenuComClassesAndDeduplicatesVerbs()
+    {
+        const string manifest = """
+            <?xml version="1.0" encoding="utf-8"?>
+            <Package
+              xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+              xmlns:com="http://schemas.microsoft.com/appx/manifest/com/windows10"
+              xmlns:desktop4="http://schemas.microsoft.com/appx/manifest/desktop/windows10/4">
+              <Properties>
+                <DisplayName>Sample Tools</DisplayName>
+              </Properties>
+              <Applications>
+                <Application Id="App">
+                  <Extensions>
+                    <desktop4:Extension Category="windows.fileExplorerContextMenus">
+                      <desktop4:FileExplorerContextMenus>
+                        <desktop4:ItemType Type="*">
+                          <desktop4:Verb Id="OpenMenu" Clsid="{11111111-2222-3333-4444-555555555555}" />
+                        </desktop4:ItemType>
+                        <desktop4:ItemType Type="Directory">
+                          <desktop4:Verb Id="OpenMenu" Clsid="11111111-2222-3333-4444-555555555555" />
+                        </desktop4:ItemType>
+                      </desktop4:FileExplorerContextMenus>
+                    </desktop4:Extension>
+                    <com:Extension Category="windows.comServer">
+                      <com:ComServer>
+                        <com:InProcessServer Path="Shell\MenuExt.dll">
+                          <com:Class Id="11111111-2222-3333-4444-555555555555" />
+                          <com:Class Id="AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE" />
+                        </com:InProcessServer>
+                      </com:ComServer>
+                    </com:Extension>
+                  </Extensions>
+                </Application>
+              </Applications>
+            </Package>
+            """;
+
+        var entries = ContextMenuManagerEngine.ParseAppxManifestModernMenus(
+            manifest,
+            "Sample.Tools_1.0.0.0_x64__8wekyb3d8bbwe",
+            "Sample.Tools",
+            "Sample Tools App",
+            "Contoso",
+            @"C:\Program Files\WindowsApps\Sample");
+
+        Assert.Single(entries);
+        Assert.Equal("{11111111-2222-3333-4444-555555555555}", entries[0].Clsid);
+        Assert.Equal("Sample Tools App", entries[0].DisplayTitle);
+        Assert.EndsWith(@"Shell\MenuExt.dll", entries[0].TargetBinaryOrCommand, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void BlockedMarkerAndLocationContracts_AnnotateAppNameAndMatchBlockedKey()
+    {
+        string formatted = ContextMenuManagerEngine.FormatBlockedMarkerText("Sample Ext", "{11111111-2222-3333-4444-555555555555}");
+        Assert.Equal("Sample Ext (Blocked by StartupGuard)", formatted);
+        Assert.Equal("Sample Ext", ContextMenuManagerEngine.StripStartupGuardBlockedSuffix(formatted));
+        Assert.Equal(string.Empty, ContextMenuManagerEngine.StripStartupGuardBlockedSuffix("Blocked by StartupGuard"));
+        Assert.True(StartupGuard.Core.Native.PrivilegedRollbackEngine.IsApprovedShellExtensionLocation(
+            @"HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Shell Extensions\Blocked::{11111111-2222-3333-4444-555555555555}"));
+    }
+
+    [Fact]
     public void MainWindowAndTrayHost_Feedback13Contracts()
     {
         string? dir = AppContext.BaseDirectory;

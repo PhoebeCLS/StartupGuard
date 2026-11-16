@@ -5,11 +5,13 @@ using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using System.Xml.Linq;
 using Microsoft.Win32;
 using StartupGuard.Core.Models;
 using StartupGuard.Core.Native;
 using StartupGuard.Core.Scoring;
 using StartupGuard.Core.Storage;
+using Windows.Management.Deployment;
 
 namespace StartupGuard.Core.ContextMenu;
 
@@ -1076,6 +1078,13 @@ public sealed unsafe partial class ContextMenuManagerEngine
 
         PrivilegedRollbackEngine.EnableAllSystemRollbackPrivileges();
 
+        if (idKeyOrPath.Contains(@"\Shell Extensions\Blocked", StringComparison.OrdinalIgnoreCase))
+        {
+            string blockedClsid = PrivilegedRollbackEngine.ExtractClsidOrIdentifier(idKeyOrPath);
+            if (!string.IsNullOrEmpty(blockedClsid))
+                return SetWin11ModernMenuBlockedState(blockedClsid, blockItem: false, activeUserSid);
+        }
+
         if (idKeyOrPath.StartsWith("Approved:", StringComparison.OrdinalIgnoreCase))
         {
             string clsid = idKeyOrPath.Substring("Approved:".Length).Trim();
@@ -1111,7 +1120,7 @@ public sealed unsafe partial class ContextMenuManagerEngine
     }
 
     /// <summary>
-    /// 扫描所有 Win11 现代右键菜单扩展 (PackagedCom / IExplorerCommand) 及 Blocked 状态
+    /// 扫描 Windows 11 PackagedCom 现代右键菜单扩展 (仅解析 AppxManifest 中实际声明了 windows.fileExplorerContextMenus 的扩展，并按 CLSID 去重)
     /// </summary>
     public List<ContextMenuItemEntry> ScanWindows11ModernMenus(string? activeUserSid)
     {
@@ -1120,117 +1129,638 @@ public sealed unsafe partial class ContextMenuManagerEngine
             return results;
 
         var blockedClsids = GetBlockedShellExtensionClsids(activeUserSid);
+        var seenClsids = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var seenPackages = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-        // 1. 扫描 HKLM PackagedCom\ClassIndex
-        ScanPackagedComHive(PrivilegedRollbackEngine.HKEY_LOCAL_MACHINE, @"SOFTWARE\Classes\PackagedCom\ClassIndex", blockedClsids, results);
-
-        // 2. 扫描当前交互用户的 HKEY_USERS\<SID>\Software\Classes\PackagedCom\ClassIndex
-        if (!string.IsNullOrEmpty(activeUserSid))
+        try
         {
-            string userClassIndex = InteractiveUserHiveResolver.ResolveUserRegistryPath(activeUserSid, @"Software\Classes\PackagedCom\ClassIndex");
-            ScanPackagedComHive(PrivilegedRollbackEngine.HKEY_USERS, userClassIndex, blockedClsids, results);
+            var pm = new PackageManager();
+            IEnumerable<Windows.ApplicationModel.Package>? packages = null;
+            if (!string.IsNullOrWhiteSpace(activeUserSid))
+            {
+                try { packages = pm.FindPackagesForUser(activeUserSid); }
+                catch { packages = null; }
+            }
+            packages ??= pm.FindPackagesForUser(string.Empty);
+
+            foreach (var package in packages)
+            {
+                string packageFullName;
+                string packageName;
+                string packageDisplayName = string.Empty;
+                string publisherDisplayName = string.Empty;
+                string installPath;
+                try
+                {
+                    packageFullName = package.Id.FullName;
+                    packageName = package.Id.Name;
+                    installPath = package.InstalledLocation.Path;
+                }
+                catch
+                {
+                    continue;
+                }
+
+                if (string.IsNullOrWhiteSpace(packageFullName) ||
+                    string.IsNullOrWhiteSpace(installPath) ||
+                    !seenPackages.Add(packageFullName))
+                {
+                    continue;
+                }
+
+                string manifestPath = Path.Combine(installPath, "AppxManifest.xml");
+                if (!File.Exists(manifestPath))
+                {
+                    string bundleManifest = Path.Combine(installPath, "AppxMetadata", "AppxBundleManifest.xml");
+                    if (!File.Exists(bundleManifest))
+                        continue;
+                    manifestPath = bundleManifest;
+                }
+
+                string manifestXml;
+                try
+                {
+                    manifestXml = File.ReadAllText(manifestPath);
+                }
+                catch
+                {
+                    continue;
+                }
+
+                if (!manifestXml.Contains("windows.fileExplorerContextMenus", StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                try { packageDisplayName = package.DisplayName ?? string.Empty; } catch { }
+                try { publisherDisplayName = package.PublisherDisplayName ?? string.Empty; } catch { }
+
+                var parsed = ParseAppxManifestModernMenus(
+                    manifestXml,
+                    packageFullName,
+                    packageName,
+                    packageDisplayName,
+                    publisherDisplayName,
+                    installPath);
+
+                foreach (var entry in parsed)
+                {
+                    if (!seenClsids.Add(entry.Clsid))
+                        continue;
+
+                    if (string.IsNullOrWhiteSpace(entry.TargetBinaryOrCommand))
+                    {
+                        string regDll = ResolvePackagedComServerBinary(PrivilegedRollbackEngine.HKEY_LOCAL_MACHINE, packageFullName, entry.Clsid);
+                        if (string.IsNullOrWhiteSpace(regDll) && !string.IsNullOrWhiteSpace(activeUserSid))
+                        {
+                            string userClassKey = InteractiveUserHiveResolver.ResolveUserRegistryPath(
+                                activeUserSid,
+                                $@"Software\Classes\PackagedCom\Package\{packageFullName}\Class\{entry.Clsid}");
+                            regDll = ReadRegistryStringValue(PrivilegedRollbackEngine.HKEY_USERS, userClassKey, "DllPath");
+                        }
+                        if (!string.IsNullOrWhiteSpace(regDll))
+                            entry.TargetBinaryOrCommand = regDll;
+                    }
+
+                    entry.RegistryPath = ResolvePackagedComClassIndexRegistryPath(entry.Clsid, packageFullName, activeUserSid);
+                    entry.IsEnabled = !blockedClsids.Contains(entry.Clsid);
+                    results.Add(entry);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            SharedStorageHelper.LogDiagnostic("ContextMenuEngine", $"ScanWindows11ModernMenus PackageManager error: {ex.Message}");
         }
 
         return results;
     }
 
-    private void ScanPackagedComHive(
-        nint rootHive,
-        string subKeyPath,
-        HashSet<string> blockedClsids,
-        List<ContextMenuItemEntry> output)
+    public static List<ContextMenuItemEntry> ParseAppxManifestModernMenus(
+        string manifestXml,
+        string packageFullName,
+        string packageName,
+        string packageDisplayName,
+        string publisherDisplayName,
+        string installPath)
     {
-        if (RegOpenKeyExW(rootHive, subKeyPath, 0, KEY_READ | KEY_WOW64_64KEY, out nint hIndexKey) != 0)
-            return;
+        var results = new List<ContextMenuItemEntry>();
+        if (string.IsNullOrWhiteSpace(manifestXml) ||
+            !manifestXml.Contains("windows.fileExplorerContextMenus", StringComparison.OrdinalIgnoreCase))
+        {
+            return results;
+        }
 
+        XDocument doc;
         try
         {
-            char* nameBuf = stackalloc char[260];
-            uint index = 0;
-            while (true)
+            doc = XDocument.Parse(manifestXml);
+        }
+        catch
+        {
+            return results;
+        }
+
+        if (doc.Root is not { } root ||
+            root.Name.LocalName != "Package" ||
+            !IsAppxManifestNamespace(root.Name.NamespaceName))
+        {
+            return results;
+        }
+
+        string? manifestPropertiesDisplayName = root
+            .Descendants()
+            .FirstOrDefault(static el =>
+                el.Name.LocalName == "DisplayName" &&
+                el.Parent?.Name.LocalName == "Properties" &&
+                IsAppxManifestNamespace(el.Name.NamespaceName))
+            ?.Value?.Trim();
+
+        // 1. 解析 windows.fileExplorerContextMenus 声明的真实右键菜单 Verb CLSID（按 CLSID 去重并保留顺序）
+        var verbOrder = new List<(string Clsid, string VerbId)>();
+        var seenVerbClsids = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var ext in FindManifestExtensions(root, "windows.fileExplorerContextMenus"))
+        {
+            foreach (var verb in ext.Descendants().Where(static el =>
+                         el.Name.LocalName == "Verb" &&
+                         IsAppxManifestNamespace(el.Name.NamespaceName)))
             {
-                uint nameLen = 260;
-                int err = RegEnumKeyExW(hIndexKey, index++, nameBuf, ref nameLen, 0, 0, 0, out long lastWriteFt);
-                if (err != 0) break;
+                string? rawClsid = GetXmlAttribute(verb, "Clsid");
+                if (!TryNormalizeClsid(rawClsid, out string normClsid))
+                    continue;
+                if (!seenVerbClsids.Add(normClsid))
+                    continue;
 
-                string clsid = new(nameBuf, 0, (int)nameLen);
-                if (!clsid.StartsWith('{')) continue;
-
-                // 读取该 CLSID 下绑定的 MSIX PackageFullName 子键
-                string clsidSubKey = $@"{subKeyPath}\{clsid}";
-                string packageId = TryGetFirstSubKeyName(rootHive, clsidSubKey, out _);
-                if (string.IsNullOrEmpty(packageId)) continue;
-
-                // 解析 COM Server DLL 物理路径
-                string serverDllPath = ResolvePackagedComServerBinary(rootHive, packageId, clsid);
-                bool isBlocked = blockedClsids.Contains(clsid);
-
-                output.Add(new ContextMenuItemEntry
-                {
-                    IdKey = $"Win11Modern:{clsid}:{packageId}",
-                    DisplayTitle = ExtractFriendlyPackageName(packageId),
-                    MenuCategory = MonitorCategory.ModernContextMenu,
-                    ScopeScene = "Win11 Modern Menu (IExplorerCommand)",
-                    RegistryPath = FormatRegistryPath(rootHive, $@"{clsidSubKey}\{packageId}"),
-                    Clsid = clsid,
-                    PackageFullName = packageId,
-                    TargetBinaryOrCommand = serverDllPath,
-                    IsEnabled = !isBlocked,
-                    LastWriteTimeFileTime = lastWriteFt
-                });
+                string verbId = GetXmlAttribute(verb, "Id")?.Trim() ?? string.Empty;
+                verbOrder.Add((normClsid, verbId));
             }
         }
-        finally
+
+        if (verbOrder.Count == 0)
+            return results;
+
+        // 2. 解析 windows.comServer 映射（未在 FileExplorerContextMenus 引用的内部 COM 类一概忽略）
+        var comServers = new Dictionary<string, (string BinaryPath, string ServerDisplay, string ClassDisplay)>(StringComparer.OrdinalIgnoreCase);
+        foreach (var ext in FindManifestExtensions(root, "windows.comServer"))
         {
-            RegCloseKey(hIndexKey);
+            foreach (var comRoot in ext.Descendants().Where(static el =>
+                         el.Name.LocalName == "ComServer" &&
+                         IsAppxManifestNamespace(el.Name.NamespaceName)))
+            {
+                foreach (var server in comRoot.Elements().Where(static el =>
+                             el.Name.LocalName is "InProcessServer" or "ExeServer" or "SurrogateServer" &&
+                             IsAppxManifestNamespace(el.Name.NamespaceName)))
+                {
+                    string serverDisplay = GetXmlAttribute(server, "DisplayName")?.Trim() ?? string.Empty;
+                    string serverBinary = FirstNonEmptyLabel(
+                        GetXmlAttribute(server, "Path"),
+                        GetXmlAttribute(server, "Executable"));
+
+                    foreach (var cls in server.Descendants().Where(static el =>
+                                 el.Name.LocalName == "Class" &&
+                                 IsAppxManifestNamespace(el.Name.NamespaceName)))
+                    {
+                        if (!TryNormalizeClsid(GetXmlAttribute(cls, "Id"), out string normClsid))
+                            continue;
+
+                        string declaredBinary = FirstNonEmptyLabel(
+                            GetXmlAttribute(cls, "Path"),
+                            GetXmlAttribute(cls, "Executable"),
+                            serverBinary);
+                        string resolvedBinary = string.IsNullOrWhiteSpace(declaredBinary)
+                            ? string.Empty
+                            : (Path.IsPathRooted(declaredBinary) || string.IsNullOrWhiteSpace(installPath)
+                                ? declaredBinary
+                                : Path.Combine(installPath, declaredBinary));
+                        string classDisplay = GetXmlAttribute(cls, "DisplayName")?.Trim() ?? string.Empty;
+                        comServers.TryAdd(normClsid, (resolvedBinary, serverDisplay, classDisplay));
+                    }
+                }
+            }
         }
+
+        // 仅保留在 comServer 中存在有效实现的右键菜单 CLSID
+        var validVerbs = verbOrder.Where(v => comServers.ContainsKey(v.Clsid)).ToList();
+        if (validVerbs.Count == 0)
+            return results;
+
+        string cleanPkgDisplay = SanitizeAppxDisplayLabel(packageDisplayName);
+        string cleanManifestDisplay = SanitizeAppxDisplayLabel(manifestPropertiesDisplayName);
+        string cleanPublisher = SanitizeAppxDisplayLabel(publisherDisplayName);
+        string fallbackName = !string.IsNullOrWhiteSpace(packageName)
+            ? packageName
+            : ExtractFriendlyPackageName(packageFullName);
+
+        foreach (var (normClsid, verbId) in validVerbs)
+        {
+            comServers.TryGetValue(normClsid, out var serverInfo);
+            string baseTitle = FirstNonEmptyLabel(
+                cleanPkgDisplay,
+                cleanManifestDisplay,
+                ContextMenuGuidResolver.GetClsidText(normClsid),
+                SanitizeAppxDisplayLabel(serverInfo.ClassDisplay),
+                SanitizeAppxDisplayLabel(serverInfo.ServerDisplay),
+                fallbackName);
+
+            // 同包多个右键菜单 Verb 且无独立 Class DisplayName 时附加 VerbId 便于区分
+            string finalTitle = validVerbs.Count > 1 &&
+                                !string.IsNullOrWhiteSpace(verbId) &&
+                                string.IsNullOrWhiteSpace(SanitizeAppxDisplayLabel(serverInfo.ClassDisplay))
+                ? $"{baseTitle} ({verbId})"
+                : baseTitle;
+
+            results.Add(new ContextMenuItemEntry
+            {
+                IdKey = $"Win11Modern:{normClsid}:{packageFullName}",
+                DisplayTitle = finalTitle,
+                MenuCategory = MonitorCategory.ModernContextMenu,
+                ScopeScene = "Win11 Modern Menu (IExplorerCommand)",
+                RegistryPath = $@"HKLM\SOFTWARE\Classes\PackagedCom\ClassIndex\{normClsid}\{packageFullName}",
+                Clsid = normClsid,
+                PackageFullName = packageFullName,
+                Publisher = cleanPublisher,
+                TargetBinaryOrCommand = serverInfo.BinaryPath,
+                IsEnabled = true
+            });
+        }
+
+        return results;
+    }
+
+    private static string ResolvePackagedComClassIndexRegistryPath(string normClsid, string packageFullName, string? activeUserSid)
+    {
+        string hklmSub = $@"SOFTWARE\Classes\PackagedCom\ClassIndex\{normClsid}\{packageFullName}";
+        if (RegOpenKeyExW(PrivilegedRollbackEngine.HKEY_LOCAL_MACHINE, hklmSub, 0, KEY_READ | KEY_WOW64_64KEY, out nint hKey) == 0)
+        {
+            RegCloseKey(hKey);
+            return $@"HKLM\{hklmSub}";
+        }
+
+        if (!string.IsNullOrWhiteSpace(activeUserSid))
+        {
+            string hkuSub = InteractiveUserHiveResolver.ResolveUserRegistryPath(activeUserSid, $@"Software\Classes\PackagedCom\ClassIndex\{normClsid}\{packageFullName}");
+            if (RegOpenKeyExW(PrivilegedRollbackEngine.HKEY_USERS, hkuSub, 0, KEY_READ | KEY_WOW64_64KEY, out nint hUKey) == 0)
+            {
+                RegCloseKey(hUKey);
+                return $@"HKU\{hkuSub}";
+            }
+        }
+        else
+        {
+            string hkcuSub = $@"Software\Classes\PackagedCom\ClassIndex\{normClsid}\{packageFullName}";
+            if (RegOpenKeyExW(PrivilegedRollbackEngine.HKEY_CURRENT_USER, hkcuSub, 0, KEY_READ | KEY_WOW64_64KEY, out nint hCKey) == 0)
+            {
+                RegCloseKey(hCKey);
+                return $@"HKCU\{hkcuSub}";
+            }
+        }
+
+        return $@"HKLM\{hklmSub}";
+    }
+
+    private static IEnumerable<XElement> FindManifestExtensions(XElement root, string category) =>
+        root.Descendants().Where(el =>
+            el.Name.LocalName == "Extension" &&
+            el.Parent?.Name.LocalName == "Extensions" &&
+            IsAppxManifestNamespace(el.Name.NamespaceName) &&
+            string.Equals(GetXmlAttribute(el, "Category"), category, StringComparison.OrdinalIgnoreCase));
+
+    private static bool IsAppxManifestNamespace(string namespaceName) =>
+        namespaceName.StartsWith("http://schemas.microsoft.com/appx/manifest/", StringComparison.OrdinalIgnoreCase);
+
+    private static string? GetXmlAttribute(XElement element, string localName) =>
+        element.Attributes().FirstOrDefault(a => a.Name.LocalName == localName)?.Value;
+
+    private static string SanitizeAppxDisplayLabel(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+            return string.Empty;
+        string trimmed = raw.Trim();
+        if (trimmed.StartsWith("ms-resource:", StringComparison.OrdinalIgnoreCase) ||
+            trimmed.StartsWith("@{", StringComparison.Ordinal))
+        {
+            return string.Empty;
+        }
+        return trimmed;
+    }
+
+    private static string FirstNonEmptyLabel(params string?[] candidates)
+    {
+        foreach (string? c in candidates)
+        {
+            if (!string.IsNullOrWhiteSpace(c))
+                return c.Trim();
+        }
+        return string.Empty;
+    }
+
+    internal static bool TryNormalizeClsid(string? raw, out string normalized)
+    {
+        if (Guid.TryParse(raw?.Trim(), out Guid g))
+        {
+            normalized = g.ToString("B").ToUpperInvariant();
+            return true;
+        }
+        normalized = string.Empty;
+        return false;
     }
 
     /// <summary>
-    /// 启用或禁用 Windows 11 现代右键菜单扩展 (SetWin11BlockedItem / RemoveWin11BlockedItem)
-    /// 原理：向 HKCU (HKEY_USERS\&lt;SID&gt; 或当前用户) 与 HKLM 的 Shell Extensions\Blocked 写入/删除 {CLSID}
+    /// 启用或禁用 Windows 11 现代右键菜单 / GUID 锁 (写入或彻底移除 Shell Extensions\Blocked 中的 {CLSID})
+    /// 原理：写入时优先写入 HKLM（无权限时再回退用户 Hive，避免跨区重复），解锁时清除 HKLM64/32 与所有 HKCU/HKU 并做真值校验。
     /// </summary>
-    public bool SetWin11ModernMenuBlockedState(string clsid, bool blockItem, string? activeUserSid)
+    public bool SetWin11ModernMenuBlockedState(string clsid, bool blockItem, string? activeUserSid, string? displayNameHint = null)
     {
         if (string.IsNullOrWhiteSpace(clsid) || !OperatingSystem.IsWindows())
             return false;
 
-        PrivilegedRollbackEngine.EnableAllSystemRollbackPrivileges();
-        string normalizedClsid = clsid.StartsWith('{') ? clsid : $"{{{clsid}}}";
-        bool okMachine = ModifyBlockedValue(PrivilegedRollbackEngine.HKEY_LOCAL_MACHINE, BlockedExtensionsSubKey, normalizedClsid, blockItem);
+        if (!TryNormalizeClsid(clsid, out string normalizedClsid))
+            normalizedClsid = clsid.StartsWith('{') ? clsid.ToUpperInvariant() : $"{{{clsid.ToUpperInvariant()}}}";
 
-        bool okUser;
-        if (!string.IsNullOrEmpty(activeUserSid))
+        PrivilegedRollbackEngine.EnableAllSystemRollbackPrivileges();
+
+        if (blockItem)
         {
-            string userBlockedPath = InteractiveUserHiveResolver.ResolveUserRegistryPath(activeUserSid, BlockedExtensionsSubKey);
-            okUser = ModifyBlockedValue(PrivilegedRollbackEngine.HKEY_USERS, userBlockedPath, normalizedClsid, blockItem);
+            string markerText = FormatBlockedMarkerText(displayNameHint, normalizedClsid, activeUserSid);
+            bool okMachine = ModifyBlockedValue(
+                PrivilegedRollbackEngine.HKEY_LOCAL_MACHINE,
+                BlockedExtensionsSubKey,
+                normalizedClsid,
+                blockItem: true,
+                markerText);
+
+            bool okUser = false;
+            if (!okMachine)
+            {
+                if (!string.IsNullOrEmpty(activeUserSid))
+                {
+                    string userBlockedPath = InteractiveUserHiveResolver.ResolveUserRegistryPath(activeUserSid, BlockedExtensionsSubKey);
+                    okUser = ModifyBlockedValue(PrivilegedRollbackEngine.HKEY_USERS, userBlockedPath, normalizedClsid, blockItem: true, markerText);
+                }
+                else
+                {
+                    okUser = ModifyBlockedValue(PrivilegedRollbackEngine.HKEY_CURRENT_USER, BlockedExtensionsSubKey, normalizedClsid, blockItem: true, markerText);
+                }
+            }
+
+            bool verifiedBlocked = IsClsidBlockedInAnyHive(normalizedClsid, activeUserSid);
+            SharedStorageHelper.LogDiagnostic("ContextMenuEngine",
+                $"SetWin11ModernMenuBlockedState clsid={normalizedClsid} block=True sid={activeUserSid ?? "HKCU"} marker={markerText} okMachine={okMachine} okUser={okUser} verified={verifiedBlocked}");
+            return verifiedBlocked;
         }
         else
         {
-            // UI 直接调用未传 SID 时，同步修改当前用户 HKCU 下的 Shell Extensions\Blocked
-            okUser = ModifyBlockedValue(PrivilegedRollbackEngine.HKEY_CURRENT_USER, BlockedExtensionsSubKey, normalizedClsid, blockItem);
-        }
+            DeleteBlockedClsidAcrossHives(PrivilegedRollbackEngine.HKEY_LOCAL_MACHINE, BlockedExtensionsSubKey, normalizedClsid, KEY_WOW64_64KEY);
+            DeleteBlockedClsidAcrossHives(PrivilegedRollbackEngine.HKEY_LOCAL_MACHINE, BlockedExtensionsSubKey, normalizedClsid, KEY_WOW64_32KEY);
 
-        // 若是解除屏蔽 (enable=true)，额外扫描 HKEY_USERS 下所有已加载交互式会话以彻底消除残留锁
-        if (!blockItem)
-        {
+            if (!string.IsNullOrEmpty(activeUserSid))
+            {
+                string userBlockedPath = InteractiveUserHiveResolver.ResolveUserRegistryPath(activeUserSid, BlockedExtensionsSubKey);
+                DeleteBlockedClsidAcrossHives(PrivilegedRollbackEngine.HKEY_USERS, userBlockedPath, normalizedClsid, KEY_WOW64_64KEY);
+            }
+            else
+            {
+                DeleteBlockedClsidAcrossHives(PrivilegedRollbackEngine.HKEY_CURRENT_USER, BlockedExtensionsSubKey, normalizedClsid, KEY_WOW64_64KEY);
+            }
+
             try
             {
                 using var hku = Registry.Users;
                 foreach (string sid in hku.GetSubKeyNames())
                 {
-                    if (!sid.StartsWith("S-1-5-21-", StringComparison.OrdinalIgnoreCase) || sid.EndsWith("_Classes", StringComparison.OrdinalIgnoreCase))
+                    if (!sid.StartsWith("S-1-5-21-", StringComparison.OrdinalIgnoreCase) ||
+                        sid.EndsWith("_Classes", StringComparison.OrdinalIgnoreCase))
+                    {
                         continue;
+                    }
                     string path = $@"{sid}\{BlockedExtensionsSubKey}";
-                    ModifyBlockedValue(PrivilegedRollbackEngine.HKEY_USERS, path, normalizedClsid, blockItem: false);
+                    DeleteBlockedClsidAcrossHives(PrivilegedRollbackEngine.HKEY_USERS, path, normalizedClsid, KEY_WOW64_64KEY);
                 }
             }
             catch { }
+
+            bool stillBlocked = IsClsidBlockedInAnyHive(normalizedClsid, activeUserSid);
+            SharedStorageHelper.LogDiagnostic("ContextMenuEngine",
+                $"SetWin11ModernMenuBlockedState clsid={normalizedClsid} block=False sid={activeUserSid ?? "HKCU"} stillBlocked={stillBlocked}");
+            return !stillBlocked;
+        }
+    }
+
+    public static string FormatBlockedMarkerText(string? preferredLabel, string clsid, string? activeUserSid = null)
+    {
+        if (!TryNormalizeClsid(clsid, out string normClsid))
+            normClsid = clsid?.Trim() ?? string.Empty;
+
+        string cleanLabel = StripStartupGuardBlockedSuffix(preferredLabel);
+        if (string.IsNullOrWhiteSpace(cleanLabel) || Guid.TryParse(cleanLabel, out _))
+        {
+            cleanLabel = ResolveFriendlyAppLabelForClsid(normClsid, activeUserSid);
         }
 
-        SharedStorageHelper.LogDiagnostic("ContextMenuEngine",
-            $"SetWin11ModernMenuBlockedState clsid={normalizedClsid} block={blockItem} sid={activeUserSid ?? "HKCU"} okMachine={okMachine} okUser={okUser}");
-        return okMachine || okUser;
+        return !string.IsNullOrWhiteSpace(cleanLabel)
+            ? $"{cleanLabel} (Blocked by StartupGuard)"
+            : "Blocked by StartupGuard";
+    }
+
+    public static string StripStartupGuardBlockedSuffix(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return string.Empty;
+
+        string trimmed = value.Trim();
+        if (string.Equals(trimmed, "Blocked by StartupGuard", StringComparison.OrdinalIgnoreCase))
+            return string.Empty;
+
+        const string suffix = " (Blocked by StartupGuard)";
+        if (trimmed.EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
+            return trimmed[..^suffix.Length].Trim();
+
+        return trimmed;
+    }
+
+    private static string ResolveFriendlyAppLabelForClsid(string normClsid, string? activeUserSid)
+    {
+        if (!OperatingSystem.IsWindows() || string.IsNullOrWhiteSpace(normClsid))
+            return string.Empty;
+
+        string dictTitle = StripStartupGuardBlockedSuffix(ContextMenuGuidResolver.GetClsidText(normClsid));
+        if (!string.IsNullOrWhiteSpace(dictTitle) && !Guid.TryParse(dictTitle, out _))
+            return dictTitle;
+
+        string regTitle = StripStartupGuardBlockedSuffix(
+            ResolveClsidFriendlyName(PrivilegedRollbackEngine.HKEY_LOCAL_MACHINE, normClsid, activeUserSid));
+        if (!string.IsNullOrWhiteSpace(regTitle) && !Guid.TryParse(regTitle, out _))
+            return regTitle;
+
+        string packagedName = ResolvePackagedAppNameByClsid(normClsid, activeUserSid);
+        if (!string.IsNullOrWhiteSpace(packagedName) && !Guid.TryParse(packagedName, out _))
+            return packagedName;
+
+        string dll = ContextMenuGuidResolver.GetClsidFilePath(normClsid);
+        if (string.IsNullOrWhiteSpace(dll))
+            dll = ResolveClassicComInprocServer32(normClsid, activeUserSid);
+        if (!string.IsNullOrWhiteSpace(dll))
+        {
+            string expanded = Environment.ExpandEnvironmentVariables(dll).Trim('"');
+            string fileName = Path.GetFileNameWithoutExtension(expanded);
+            if (!string.IsNullOrWhiteSpace(fileName))
+                return fileName;
+        }
+
+        return string.Empty;
+    }
+
+    private static string ResolvePackagedAppNameByClsid(string normClsid, string? activeUserSid)
+    {
+        try
+        {
+            string pkgId = TryGetFirstSubKeyName(
+                PrivilegedRollbackEngine.HKEY_LOCAL_MACHINE,
+                $@"SOFTWARE\Classes\PackagedCom\ClassIndex\{normClsid}",
+                out _);
+
+            if (string.IsNullOrWhiteSpace(pkgId) && !string.IsNullOrWhiteSpace(activeUserSid))
+            {
+                string userClassIdx = InteractiveUserHiveResolver.ResolveUserRegistryPath(
+                    activeUserSid,
+                    $@"Software\Classes\PackagedCom\ClassIndex\{normClsid}");
+                pkgId = TryGetFirstSubKeyName(PrivilegedRollbackEngine.HKEY_USERS, userClassIdx, out _);
+            }
+
+            if (string.IsNullOrWhiteSpace(pkgId))
+            {
+                pkgId = TryGetFirstSubKeyName(
+                    PrivilegedRollbackEngine.HKEY_CURRENT_USER,
+                    $@"Software\Classes\PackagedCom\ClassIndex\{normClsid}",
+                    out _);
+            }
+
+            if (!string.IsNullOrWhiteSpace(pkgId))
+            {
+                try
+                {
+                    var pm = new PackageManager();
+                    Windows.ApplicationModel.Package? pkg = null;
+                    if (!string.IsNullOrWhiteSpace(activeUserSid))
+                    {
+                        try { pkg = pm.FindPackageForUser(activeUserSid, pkgId); } catch { }
+                    }
+                    pkg ??= pm.FindPackageForUser(string.Empty, pkgId);
+                    if (pkg is not null)
+                    {
+                        string disp = SanitizeAppxDisplayLabel(pkg.DisplayName);
+                        if (!string.IsNullOrWhiteSpace(disp))
+                            return disp;
+                        if (!string.IsNullOrWhiteSpace(pkg.Id?.Name))
+                            return pkg.Id.Name;
+                    }
+                }
+                catch { }
+
+                return ExtractFriendlyPackageName(pkgId);
+            }
+        }
+        catch { }
+
+        return string.Empty;
+    }
+
+    public static bool IsClsidBlockedInAnyHive(string clsid, string? activeUserSid = null)
+    {
+        if (!OperatingSystem.IsWindows() || string.IsNullOrWhiteSpace(clsid))
+            return false;
+
+        if (!TryNormalizeClsid(clsid, out string normClsid))
+            return false;
+
+        bool CheckHive(RegistryKey root, string subKeyPath)
+        {
+            try
+            {
+                using var k = root.OpenSubKey(subKeyPath, writable: false);
+                if (k == null) return false;
+                foreach (string name in k.GetValueNames())
+                {
+                    if (Guid.TryParse(name, out Guid parsed) &&
+                        string.Equals(parsed.ToString("B"), normClsid, StringComparison.OrdinalIgnoreCase))
+                    {
+                        return true;
+                    }
+                }
+            }
+            catch { }
+            return false;
+        }
+
+        using (var hklm64 = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Registry64))
+        {
+            if (CheckHive(hklm64, BlockedExtensionsSubKey))
+                return true;
+        }
+        using (var hklm32 = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Registry32))
+        {
+            if (CheckHive(hklm32, BlockedExtensionsSubKey))
+                return true;
+        }
+        if (CheckHive(Registry.CurrentUser, BlockedExtensionsSubKey))
+            return true;
+        if (!string.IsNullOrWhiteSpace(activeUserSid) &&
+            CheckHive(Registry.Users, $@"{activeUserSid}\{BlockedExtensionsSubKey}"))
+        {
+            return true;
+        }
+        try
+        {
+            foreach (string sid in Registry.Users.GetSubKeyNames())
+            {
+                if (!sid.StartsWith("S-1-5-21-", StringComparison.OrdinalIgnoreCase) ||
+                    sid.EndsWith("_Classes", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+                if (CheckHive(Registry.Users, $@"{sid}\{BlockedExtensionsSubKey}"))
+                    return true;
+            }
+        }
+        catch { }
+
+        return false;
+    }
+
+    private static void DeleteBlockedClsidAcrossHives(nint rootHive, string subKey, string normalizedClsid, uint wowFlag)
+    {
+        if (RegOpenKeyExW(rootHive, subKey, 0, KEY_READ | KEY_SET_VALUE | wowFlag, out nint hKey) != 0)
+        {
+            ModifyBlockedValue(rootHive, subKey, normalizedClsid, blockItem: false, markerText: null, wowFlag: wowFlag);
+            return;
+        }
+
+        try
+        {
+            var toDelete = new List<string>();
+            char* valName = stackalloc char[128];
+            uint idx = 0;
+            while (true)
+            {
+                uint cch = 128;
+                int err = EnumValueNameOnly(hKey, idx++, valName, ref cch);
+                if (err != 0) break;
+                string rawName = new(valName, 0, (int)cch);
+                if (Guid.TryParse(rawName, out Guid g) &&
+                    string.Equals(g.ToString("B"), normalizedClsid, StringComparison.OrdinalIgnoreCase))
+                {
+                    toDelete.Add(rawName);
+                }
+            }
+
+            foreach (string name in toDelete)
+            {
+                RegDeleteValueW(hKey, name);
+            }
+        }
+        finally
+        {
+            RegCloseKey(hKey);
+        }
     }
 
     /// <summary>
@@ -1451,7 +1981,7 @@ public sealed unsafe partial class ContextMenuManagerEngine
         }
         else if (item.MenuCategory == MonitorCategory.ModernContextMenu)
         {
-            ok = SetWin11ModernMenuBlockedState(item.Clsid, blockItem: !enable, activeUserSid);
+            ok = SetWin11ModernMenuBlockedState(item.Clsid, blockItem: !enable, activeUserSid, item.DisplayTitle);
         }
         else if (item.IdKey.StartsWith("Approved:", StringComparison.OrdinalIgnoreCase) ||
                  PrivilegedRollbackEngine.IsApprovedShellExtensionLocation(item.RegistryPath))
@@ -1460,7 +1990,7 @@ public sealed unsafe partial class ContextMenuManagerEngine
                 ? item.Clsid
                 : PrivilegedRollbackEngine.ExtractClsidOrIdentifier(item.RegistryPath);
             ok = !string.IsNullOrWhiteSpace(targetClsid) &&
-                 SetWin11ModernMenuBlockedState(targetClsid, blockItem: !enable, activeUserSid);
+                 SetWin11ModernMenuBlockedState(targetClsid, blockItem: !enable, activeUserSid, item.DisplayTitle);
         }
         else if (item.RegistryPath.Contains(@"\shellex\ContextMenuHandlers", StringComparison.OrdinalIgnoreCase) ||
                  item.RegistryPath.Contains(@"\shellex\-ContextMenuHandlers", StringComparison.OrdinalIgnoreCase) ||
@@ -1664,7 +2194,11 @@ public sealed unsafe partial class ContextMenuManagerEngine
                 uint cch = 128;
                 int err = EnumValueNameOnly(hKey, idx++, valName, ref cch);
                 if (err != 0) break;
-                targetSet.Add(new string(valName, 0, (int)cch));
+                string raw = new(valName, 0, (int)cch);
+                if (TryNormalizeClsid(raw, out string norm))
+                    targetSet.Add(norm);
+                else
+                    targetSet.Add(raw);
             }
         }
         finally
@@ -1684,26 +2218,44 @@ public sealed unsafe partial class ContextMenuManagerEngine
         nint lpData = 0,
         nint lpcbData = 0);
 
-    private static bool ModifyBlockedValue(nint rootHive, string subKey, string clsid, bool blockItem)
+    private static bool ModifyBlockedValue(
+        nint rootHive,
+        string subKey,
+        string clsid,
+        bool blockItem,
+        string? markerText = null,
+        uint wowFlag = KEY_WOW64_64KEY)
     {
-        if (RegCreateKeyExW(rootHive, subKey, 0, null, REG_OPTION_BACKUP_RESTORE, KEY_WRITE | KEY_WOW64_64KEY, 0, out nint hKey, out _) != 0)
-            return false;
+        if (blockItem)
+        {
+            if (RegCreateKeyExW(rootHive, subKey, 0, null, REG_OPTION_BACKUP_RESTORE, KEY_WRITE | wowFlag, 0, out nint hCreateKey, out _) != 0)
+                return false;
+
+            try
+            {
+                string marker = string.IsNullOrWhiteSpace(markerText) ? "Blocked by StartupGuard" : markerText;
+                fixed (char* pMarker = marker)
+                {
+                    return RegSetValueExW(hCreateKey, clsid, 0, REG_SZ, (byte*)pMarker, (uint)((marker.Length + 1) * 2)) == 0;
+                }
+            }
+            finally
+            {
+                RegCloseKey(hCreateKey);
+            }
+        }
+
+        int openErr = RegOpenKeyExW(rootHive, subKey, 0, KEY_SET_VALUE | wowFlag, out nint hKey);
+        if (openErr != 0)
+        {
+            // ERROR_FILE_NOT_FOUND (2): 键不存在说明无阻塞记录；ERROR_ACCESS_DENIED (5) 等返回 false
+            return openErr == 2;
+        }
 
         try
         {
-            if (blockItem)
-            {
-                const string marker = "Blocked by StartupGuard";
-                fixed (char* pMarker = marker)
-                {
-                    return RegSetValueExW(hKey, clsid, 0, REG_SZ, (byte*)pMarker, (uint)((marker.Length + 1) * 2)) == 0;
-                }
-            }
-            else
-            {
-                int res = RegDeleteValueW(hKey, clsid);
-                return res == 0 || res == 2;
-            }
+            int res = RegDeleteValueW(hKey, clsid);
+            return res == 0 || res == 2;
         }
         finally
         {
@@ -2868,7 +3420,7 @@ public sealed unsafe partial class ContextMenuManagerEngine
     // ================= 3. GUID 锁 (Shell Extensions\Blocked) =================
 
     /// <summary>
-    /// 扫描 HKLM 与 HKCU/HKU 的 Shell Extensions\Blocked 中被锁定的 CLSID
+    /// 扫描 HKLM 的全局 Shell Extensions\Blocked（及仅由 StartupGuard 回退写入的用户级 Blocked）中的 CLSID，并解析应用名称
     /// </summary>
     public List<ContextMenuItemEntry> ScanGuidBlockedEntries(string? activeUserSid = null)
     {
@@ -2878,7 +3430,7 @@ public sealed unsafe partial class ContextMenuManagerEngine
 
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-        void ScanHive(RegistryKey baseKey, string rootDisplayName, string subKey)
+        void ScanHive(RegistryKey baseKey, string rootDisplayName, string subKey, bool onlyStartupGuardOwned)
         {
             try
             {
@@ -2888,14 +3440,16 @@ public sealed unsafe partial class ContextMenuManagerEngine
                 {
                     if (string.IsNullOrWhiteSpace(valName)) continue;
                     if (!Guid.TryParse(valName, out Guid g)) continue;
+
+                    string rawRegValue = k.GetValue(valName)?.ToString()?.Trim() ?? string.Empty;
+                    if (onlyStartupGuardOwned &&
+                        !rawRegValue.Contains("StartupGuard", StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
+
                     string normClsid = g.ToString("B").ToUpperInvariant();
                     if (!seen.Add(normClsid)) continue;
-
-                    string title = ContextMenuGuidResolver.GetClsidText(normClsid);
-                    if (string.IsNullOrWhiteSpace(title))
-                        title = ResolveClsidFriendlyName(PrivilegedRollbackEngine.HKEY_LOCAL_MACHINE, normClsid, activeUserSid);
-                    if (string.IsNullOrWhiteSpace(title))
-                        title = normClsid;
 
                     string dll = ContextMenuGuidResolver.GetClsidFilePath(normClsid);
                     if (string.IsNullOrWhiteSpace(dll))
@@ -2904,6 +3458,14 @@ public sealed unsafe partial class ContextMenuManagerEngine
                     string expandedDll = !string.IsNullOrWhiteSpace(dll)
                         ? Environment.ExpandEnvironmentVariables(dll).Trim('"')
                         : string.Empty;
+
+                    string title = FirstNonEmptyLabel(
+                        StripStartupGuardBlockedSuffix(ContextMenuGuidResolver.GetClsidText(normClsid)),
+                        StripStartupGuardBlockedSuffix(ResolveClsidFriendlyName(PrivilegedRollbackEngine.HKEY_LOCAL_MACHINE, normClsid, activeUserSid)),
+                        StripStartupGuardBlockedSuffix(rawRegValue),
+                        ResolvePackagedAppNameByClsid(normClsid, activeUserSid),
+                        !string.IsNullOrWhiteSpace(expandedDll) ? Path.GetFileNameWithoutExtension(expandedDll) : string.Empty,
+                        normClsid);
 
                     results.Add(new ContextMenuItemEntry
                     {
@@ -2922,14 +3484,16 @@ public sealed unsafe partial class ContextMenuManagerEngine
         }
 
         using (var hklm64 = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Registry64))
-            ScanHive(hklm64, "HKLM", BlockedExtensionsSubKey);
+            ScanHive(hklm64, "HKLM", BlockedExtensionsSubKey, onlyStartupGuardOwned: false);
         using (var hklm32 = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Registry32))
-            ScanHive(hklm32, "HKLM", BlockedExtensionsSubKey);
-        ScanHive(Registry.CurrentUser, "HKCU", BlockedExtensionsSubKey);
+            ScanHive(hklm32, "HKLM", BlockedExtensionsSubKey, onlyStartupGuardOwned: false);
+
+        // HKCU/HKU 下常由 Windows/OneDrive 自动写入每用户抑制标志（归属 Win11 现代菜单状态），GUID 锁仅补充扫描由 StartupGuard 回退写入的用户级条目
+        ScanHive(Registry.CurrentUser, "HKCU", BlockedExtensionsSubKey, onlyStartupGuardOwned: true);
 
         if (!string.IsNullOrEmpty(activeUserSid))
         {
-            ScanHive(Registry.Users, $@"HKU\{activeUserSid}", $@"{activeUserSid}\{BlockedExtensionsSubKey}");
+            ScanHive(Registry.Users, $@"HKU\{activeUserSid}", $@"{activeUserSid}\{BlockedExtensionsSubKey}", onlyStartupGuardOwned: true);
         }
 
         return results;
@@ -2938,13 +3502,13 @@ public sealed unsafe partial class ContextMenuManagerEngine
     /// <summary>
     /// 向 Shell Extensions\Blocked 添加新 GUID 锁
     /// </summary>
-    public bool AddGuidBlockedEntry(string rawGuid, string? activeUserSid = null)
+    public bool AddGuidBlockedEntry(string rawGuid, string? activeUserSid = null, string? displayNameHint = null)
     {
         if (!Guid.TryParse(rawGuid?.Trim(), out Guid parsed))
             return false;
 
         string normClsid = parsed.ToString("B").ToUpperInvariant();
-        return SetWin11ModernMenuBlockedState(normClsid, blockItem: true, activeUserSid);
+        return SetWin11ModernMenuBlockedState(normClsid, blockItem: true, activeUserSid, displayNameHint);
     }
 }
 

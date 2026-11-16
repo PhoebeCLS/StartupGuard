@@ -556,12 +556,7 @@ public static unsafe partial class PrivilegedRollbackEngine
                 string clsid = ExtractClsidOrIdentifier(target.LocationKeyOrIdentifier);
                 if (!string.IsNullOrEmpty(clsid))
                 {
-                    string blockedPath = @"SOFTWARE\Microsoft\Windows\CurrentVersion\Shell Extensions\Blocked";
-                    using var hkcuBlocked = !string.IsNullOrEmpty(activeUserSid)
-                        ? Microsoft.Win32.Registry.Users.OpenSubKey($@"{activeUserSid}\{blockedPath}", false)
-                        : Microsoft.Win32.Registry.CurrentUser.OpenSubKey(blockedPath, false);
-                    using var hklmBlocked = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(blockedPath, false);
-                    bool isBlocked = hkcuBlocked?.GetValue(clsid) != null || hklmBlocked?.GetValue(clsid) != null;
+                    bool isBlocked = ContextMenuManagerEngine.IsClsidBlockedInAnyHive(clsid, activeUserSid);
                     return expectedAction == InterceptionAction.Allow ? !isBlocked : isBlocked;
                 }
             }
@@ -1376,10 +1371,12 @@ public static unsafe partial class PrivilegedRollbackEngine
                     return cmEngine.DeleteContextMenuEntry(target.LocationKeyOrIdentifier, activeUserSid);
                 }
                 string clsid = ExtractClsidOrIdentifier(target.LocationKeyOrIdentifier);
+                string displayHint = !string.IsNullOrWhiteSpace(target.DisplayName) ? target.DisplayName : target.ProductName;
                 return cmEngine.SetWin11ModernMenuBlockedState(
                     clsid,
                     blockItem: true,
-                    activeUserSid);
+                    activeUserSid,
+                    displayHint);
             }
 
             case MonitorCategory.ClassicContextMenu:
@@ -1403,7 +1400,8 @@ public static unsafe partial class PrivilegedRollbackEngine
                 if (IsApprovedShellExtensionLocation(target.LocationKeyOrIdentifier))
                 {
                     string clsid = ExtractClsidOrIdentifier(target.LocationKeyOrIdentifier);
-                    return !string.IsNullOrEmpty(clsid) && cmEngine.SetWin11ModernMenuBlockedState(clsid, blockItem: true, activeUserSid);
+                    string displayHint = !string.IsNullOrWhiteSpace(target.DisplayName) ? target.DisplayName : target.ProductName;
+                    return !string.IsNullOrEmpty(clsid) && cmEngine.SetWin11ModernMenuBlockedState(clsid, blockItem: true, activeUserSid, displayHint);
                 }
                 var (hive, subKey, _) = SplitRegistryLocation(target.LocationKeyOrIdentifier, activeUserSid);
                 if (subKey.Contains(@"\shellex\ContextMenuHandlers", StringComparison.OrdinalIgnoreCase) ||
@@ -1455,7 +1453,8 @@ public static unsafe partial class PrivilegedRollbackEngine
         if (string.IsNullOrWhiteSpace(locationKey))
             return false;
         return locationKey.StartsWith("Approved:", StringComparison.OrdinalIgnoreCase) ||
-               locationKey.Contains(@"\Shell Extensions\Approved", StringComparison.OrdinalIgnoreCase);
+               locationKey.Contains(@"\Shell Extensions\Approved", StringComparison.OrdinalIgnoreCase) ||
+               locationKey.Contains(@"\Shell Extensions\Blocked", StringComparison.OrdinalIgnoreCase);
     }
 
     public static (nint Hive, string SubKey, string ValueName) SplitRegistryLocation(string locationKey, string? activeUserSid)

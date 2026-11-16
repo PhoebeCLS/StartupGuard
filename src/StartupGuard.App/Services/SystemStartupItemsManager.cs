@@ -820,7 +820,40 @@ public sealed class SystemStartupItemsManager
         => _contextMenuEngine.InspectOpenWithRegistrationSources(ext, null);
 
     public bool AddGuidBlockedEntry(string rawGuid)
-        => _contextMenuEngine.AddGuidBlockedEntry(rawGuid, null);
+    {
+        if (!Guid.TryParse(rawGuid?.Trim(), out Guid parsed))
+            return false;
+
+        string normClsid = parsed.ToString("B").ToUpperInvariant();
+        string locationKey = $@"HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Shell Extensions\Blocked::{normClsid}";
+        string resolvedTitle = ContextMenuManagerEngine.StripStartupGuardBlockedSuffix(
+            ContextMenuManagerEngine.FormatBlockedMarkerText(null, normClsid, null));
+
+        if (OperatingSystem.IsWindows())
+        {
+            StartupGuard.Core.Ipc.BinaryPipeSerializer.NotifyServiceSuppressSelfMutation(
+                locationKey,
+                MonitorCategory.ClassicContextMenu,
+                string.Empty,
+                20.0);
+
+            if (StartupGuard.Core.Ipc.BinaryPipeSerializer.TrySendManualMutation(
+                    new StartupGuard.Core.Models.ManualItemMutationPayload
+                    {
+                        Category = MonitorCategory.ClassicContextMenu,
+                        LocationKey = locationKey,
+                        TargetBinaryPath = string.Empty,
+                        Action = InterceptionAction.RollbackToDisabled,
+                        DisplayName = resolvedTitle
+                    },
+                    out bool serviceSucceeded))
+            {
+                return serviceSucceeded;
+            }
+        }
+
+        return _contextMenuEngine.AddGuidBlockedEntry(normClsid, null, resolvedTitle);
+    }
 
     public List<ManagedStartupItem> ScanGuidBlockedEntries()
     {
@@ -931,7 +964,41 @@ public sealed class SystemStartupItemsManager
 
         if (string.Equals(item.ScopeScene, "Scene_GuidBlocked", StringComparison.OrdinalIgnoreCase))
         {
-            bool ok = _contextMenuEngine.SetWin11ModernMenuBlockedState(item.Clsid, blockItem: enable, null);
+            // GuidBlocked 语义反转：enable=true 表示保留“锁定阻止”，enable=false 表示“解除锁定”并从所有 Hive 移除
+            var blockedServiceAction = enable ? InterceptionAction.RollbackToDisabled : InterceptionAction.Allow;
+            StartupGuard.Core.Ipc.BinaryPipeSerializer.NotifyServiceSuppressSelfMutation(
+                item.LocationKey,
+                MonitorCategory.ClassicContextMenu,
+                item.CommandOrPath,
+                20.0);
+            if (!string.IsNullOrWhiteSpace(item.Clsid))
+            {
+                StartupGuard.Core.Ipc.BinaryPipeSerializer.NotifyServiceSuppressSelfMutation(
+                    $"Approved:{item.Clsid}",
+                    MonitorCategory.ClassicContextMenu,
+                    item.CommandOrPath,
+                    20.0);
+            }
+
+            bool ok;
+            if (StartupGuard.Core.Ipc.BinaryPipeSerializer.TrySendManualMutation(
+                    new StartupGuard.Core.Models.ManualItemMutationPayload
+                    {
+                        Category = MonitorCategory.ClassicContextMenu,
+                        LocationKey = item.LocationKey,
+                        TargetBinaryPath = item.CommandOrPath,
+                        Action = blockedServiceAction,
+                        DisplayName = item.DisplayName
+                    },
+                    out bool serviceSucceeded))
+            {
+                ok = serviceSucceeded;
+            }
+            else
+            {
+                ok = _contextMenuEngine.SetWin11ModernMenuBlockedState(item.Clsid, blockItem: enable, null, item.DisplayName);
+            }
+
             if (ok)
             {
                 item.IsEnabled = enable;
@@ -1168,7 +1235,20 @@ public sealed class SystemStartupItemsManager
 
             if (string.Equals(item.ScopeScene, "Scene_GuidBlocked", StringComparison.OrdinalIgnoreCase))
             {
-                return _contextMenuEngine.SetWin11ModernMenuBlockedState(item.Clsid, blockItem: false, null);
+                if (StartupGuard.Core.Ipc.BinaryPipeSerializer.TrySendManualMutation(
+                        new StartupGuard.Core.Models.ManualItemMutationPayload
+                        {
+                            Category = MonitorCategory.ClassicContextMenu,
+                            LocationKey = item.LocationKey,
+                            TargetBinaryPath = item.CommandOrPath,
+                            Action = InterceptionAction.Allow,
+                            DisplayName = item.DisplayName
+                        },
+                        out bool serviceSucceeded))
+                {
+                    return serviceSucceeded;
+                }
+                return _contextMenuEngine.SetWin11ModernMenuBlockedState(item.Clsid, blockItem: false, null, item.DisplayName);
             }
 
             if (item.Category is MonitorCategory.ClassicContextMenu or MonitorCategory.ModernContextMenu)
