@@ -1430,11 +1430,24 @@ public static class Program
                             case PipeMessageType.UserSessionReport:
                             {
                                 var report = BinaryPipeSerializer.DeserializeUserSessionReport(payload);
-                                if (!string.IsNullOrEmpty(report.UserSid) && !string.Equals(_activeInteractiveUserSid, report.UserSid, StringComparison.OrdinalIgnoreCase))
+                                if (!string.IsNullOrEmpty(report.UserSid))
                                 {
-                                    _activeInteractiveUserSid = report.UserSid;
-                                    _contextMenuPromptMode = UserSettingsStore.GetContextMenuPromptMode(_activeInteractiveUserSid);
-                                    _monitorMatrix.StartAllNativeWatchers(_activeInteractiveUserSid);
+                                    bool sidChanged = !string.Equals(_activeInteractiveUserSid, report.UserSid, StringComparison.OrdinalIgnoreCase);
+                                    int absorbed = _differ.AbsorbUserBaselineSnapshot(report.UserSid, _contextMenuEngine);
+                                    if (sidChanged)
+                                    {
+                                        _activeInteractiveUserSid = report.UserSid;
+                                        _contextMenuPromptMode = UserSettingsStore.GetContextMenuPromptMode(_activeInteractiveUserSid);
+                                        _monitorMatrix.StartAllNativeWatchers(_activeInteractiveUserSid);
+                                        SharedStorageHelper.LogDiagnostic("Service",
+                                            $"Interactive user session attached: sid={_activeInteractiveUserSid}, absorbedBaseline={absorbed}");
+                                    }
+                                    else if (absorbed > 0)
+                                    {
+                                        _monitorMatrix.StartAllNativeWatchers(report.UserSid);
+                                        SharedStorageHelper.LogDiagnostic("Service",
+                                            $"User hive late-mounted baseline absorbed: sid={report.UserSid}, count={absorbed}");
+                                    }
                                 }
                                 _gameModeController.ExternalReportedInGame = report.InGame;
 

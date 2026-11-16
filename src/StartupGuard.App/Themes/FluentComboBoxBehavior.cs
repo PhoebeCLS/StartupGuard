@@ -1,7 +1,9 @@
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
+using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Threading;
@@ -9,10 +11,10 @@ using System.Windows.Threading;
 namespace StartupGuard.Themes;
 
 /// <summary>
-/// WinUI 3 风格 ComboBox 原地展开与 SplitOpenThemeAnimation 行为：
-/// 1. 在首帧渲染前确保容器完成测量（含首次打开时的延迟 Loaded 测量），精确对齐 Popup 使选中项与原按钮原地重合；
-/// 2. 使用 RectangleGeometry 裁剪框从选中项中心向四周丝滑切开展开，绝不缩放扭曲文字像素；
-/// 3. 自动对齐当前显示器工作区边界，避免小屏幕下菜单超出视野。
+/// 对齐 WinUI 3 官方 SplitOpenThemeAnimation 实现（250ms + Cubic-bezier(0, 0, 0, 1)）：
+/// 1. 弹出层基于当前选中项与闭合按钮原地垂直居中对齐，并自动避让显示器工作区边缘；
+/// 2. 卡片主体与阴影层使用完全同步的裁切几何体（250ms KeySpline(0,0,0,1)）从按钮位置展开，消除阴影先行黑块或位置跳变；
+/// 3. 按下展开期间锁定 Trigger ToggleButton 并拦截同次点击松手落回原地选中项导致的误闭合，单击即可稳稳停留在展开态。
 /// </summary>
 public static partial class FluentComboBoxBehavior
 {
@@ -22,6 +24,16 @@ public static partial class FluentComboBoxBehavior
             typeof(bool),
             typeof(FluentComboBoxBehavior),
             new PropertyMetadata(false, OnIsEnabledChanged));
+
+    private sealed class OpenGuardState
+    {
+        public DateTime OpenedUtc { get; set; }
+        public bool SuppressOpeningRelease { get; set; }
+        public System.Windows.Point OpenMouseScreenPx { get; set; }
+    }
+
+    private static readonly ConditionalWeakTable<System.Windows.Controls.ComboBox, OpenGuardState> OpenStates = new();
+    private static readonly ConditionalWeakTable<Border, System.Windows.Controls.ComboBox> WiredBorders = new();
 
     public static bool GetIsEnabled(DependencyObject obj) => (bool)obj.GetValue(IsEnabledProperty);
 
@@ -55,16 +67,38 @@ public static partial class FluentComboBoxBehavior
             return;
         }
 
+        if (comboBox.Template.FindName("ToggleButton", comboBox) is ToggleButton toggleButton)
+        {
+            toggleButton.IsHitTestVisible = false;
+        }
+
+        var state = OpenStates.GetOrCreateValue(comboBox);
+        state.OpenedUtc = DateTime.UtcNow;
+        state.SuppressOpeningRelease = Mouse.LeftButton == MouseButtonState.Pressed;
+        if (TryGetCursorPos(out var cursorPt))
+        {
+            state.OpenMouseScreenPx = new System.Windows.Point(cursorPt.X, cursorPt.Y);
+        }
+
+        if (!WiredBorders.TryGetValue(dropDownBorder, out _))
+        {
+            WiredBorders.Add(dropDownBorder, comboBox);
+            dropDownBorder.AddHandler(
+                UIElement.PreviewMouseLeftButtonUpEvent,
+                new MouseButtonEventHandler(DropDownBorder_PreviewMouseLeftButtonUp),
+                handledEventsToo: true);
+        }
+
         var dropDownShadow = comboBox.Template.FindName("DropDownShadow", comboBox) as Border;
         var scrollViewer = comboBox.Template.FindName("DropDownScrollViewer", comboBox) as ScrollViewer;
 
-        // 先隐身再定位，防止首次打开容器未生成时闪现错位帧
         dropDownBorder.BeginAnimation(UIElement.OpacityProperty, null);
         dropDownBorder.Clip = null;
         dropDownBorder.Opacity = 0.0;
         if (dropDownShadow != null)
         {
             dropDownShadow.BeginAnimation(UIElement.OpacityProperty, null);
+            dropDownShadow.Clip = null;
             dropDownShadow.Opacity = 0.0;
         }
 
@@ -82,7 +116,6 @@ public static partial class FluentComboBoxBehavior
             return;
         }
 
-        // 首次打开时 ItemsPresenter 会在 Popup 可视树 Loaded 时才生成子项容器
         RoutedEventHandler? onLoaded = null;
         onLoaded = (_, _) =>
         {
@@ -97,7 +130,6 @@ public static partial class FluentComboBoxBehavior
         };
         shadowHost.Loaded += onLoaded;
 
-        // 双保险：Loaded 若已触发但布局仍在下一优先级队列，则在 Loaded 优先级补齐一次对齐
         comboBox.Dispatcher.BeginInvoke(DispatcherPriority.Loaded, () =>
         {
             shadowHost.Loaded -= onLoaded;
@@ -109,6 +141,33 @@ public static partial class FluentComboBoxBehavior
             dropDownBorder.UpdateLayout();
             PositionAndAnimate(comboBox, popup, contentBorder, shadowHost, dropDownBorder, dropDownShadow, scrollViewer, targetIndex);
         });
+    }
+
+    private static void DropDownBorder_PreviewMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is not Border border || !WiredBorders.TryGetValue(border, out var comboBox))
+            return;
+
+        if (!OpenStates.TryGetValue(comboBox, out var state) || !state.SuppressOpeningRelease)
+            return;
+
+        state.SuppressOpeningRelease = false;
+        double elapsedMs = (DateTime.UtcNow - state.OpenedUtc).TotalMilliseconds;
+        if (elapsedMs < 300)
+        {
+            e.Handled = true;
+            return;
+        }
+
+        if (TryGetCursorPos(out var nowPt))
+        {
+            double dx = nowPt.X - state.OpenMouseScreenPx.X;
+            double dy = nowPt.Y - state.OpenMouseScreenPx.Y;
+            if ((dx * dx + dy * dy) < 144.0)
+            {
+                e.Handled = true;
+            }
+        }
     }
 
     private static bool IsContainerReady(System.Windows.Controls.ComboBox comboBox, Border dropDownBorder, int targetIndex)
@@ -178,7 +237,6 @@ public static partial class FluentComboBoxBehavior
             itemCenterYInBorder = itemContainer.TranslatePoint(new System.Windows.Point(0, itemHeight / 2.0), dropDownBorder).Y;
         }
 
-        // 让选中项几何中心与闭合按钮几何中心完全重合（真正原地展开）
         double desiredVerticalOffset = (buttonHeight / 2.0) - itemCenterYInHost;
         popup.VerticalOffset = Math.Round(ClampVerticalOffsetToWorkArea(contentBorder, desiredVerticalOffset, fullHeight, shadowTop));
 
@@ -205,13 +263,14 @@ public static partial class FluentComboBoxBehavior
         dropDownBorder.BeginAnimation(UIElement.OpacityProperty, null);
         dropDownBorder.Opacity = 1.0;
 
-        // WinUI 3 SplitOpenThemeAnimation 标准 KeySpline(0.1, 0.9, 0.2, 1.0)
-        var winUiSpline = new KeySpline(0.1, 0.9, 0.2, 1.0);
-        var duration = TimeSpan.FromMilliseconds(167);
+        // WinUI 3 ThemeAnimations.cpp 官方 SplitOpenThemeAnimation 参数：
+        // s_OpenDuration = 250ms, Cubic-bezier(0, 0, 0, 1)
+        var winUiSplitSpline = new KeySpline(0.0, 0.0, 0.0, 1.0);
+        var openDuration = TimeSpan.FromMilliseconds(250);
 
         var rectAnim = new RectAnimationUsingKeyFrames();
         rectAnim.KeyFrames.Add(new DiscreteRectKeyFrame(startRect, KeyTime.FromTimeSpan(TimeSpan.Zero)));
-        rectAnim.KeyFrames.Add(new SplineRectKeyFrame(fullRect, KeyTime.FromTimeSpan(duration), winUiSpline));
+        rectAnim.KeyFrames.Add(new SplineRectKeyFrame(fullRect, KeyTime.FromTimeSpan(openDuration), winUiSplitSpline));
         rectAnim.Completed += (_, _) =>
         {
             if (dropDownBorder.Clip == clipGeometry)
@@ -219,19 +278,18 @@ public static partial class FluentComboBoxBehavior
                 dropDownBorder.Clip = null;
             }
         };
-
         clipGeometry.BeginAnimation(RectangleGeometry.RectProperty, rectAnim);
 
         if (comboBox.Template?.FindName("ItemsSlideTransform", comboBox) is TranslateTransform itemsSlide)
         {
             double midRatio = fullHeight > 0 ? anchorCenterInBorder / fullHeight : 0.5;
-            double slideFrom = midRatio < 0.35 ? -8.0 : (midRatio > 0.65 ? 8.0 : 0.0);
+            double slideFrom = midRatio < 0.35 ? -10.0 : (midRatio > 0.65 ? 10.0 : 0.0);
             itemsSlide.BeginAnimation(TranslateTransform.YProperty, null);
             if (Math.Abs(slideFrom) > 0.5)
             {
                 var slideAnim = new DoubleAnimationUsingKeyFrames();
                 slideAnim.KeyFrames.Add(new DiscreteDoubleKeyFrame(slideFrom, KeyTime.FromTimeSpan(TimeSpan.Zero)));
-                slideAnim.KeyFrames.Add(new SplineDoubleKeyFrame(0.0, KeyTime.FromTimeSpan(duration), winUiSpline));
+                slideAnim.KeyFrames.Add(new SplineDoubleKeyFrame(0.0, KeyTime.FromTimeSpan(openDuration), winUiSplitSpline));
                 itemsSlide.BeginAnimation(TranslateTransform.YProperty, slideAnim);
             }
             else
@@ -240,12 +298,28 @@ public static partial class FluentComboBoxBehavior
             }
         }
 
+        // 阴影层使用同步扩展裁切（外扩 24px 保留完整模糊边缘）与卡片本体同帧揭开，绝不提前露出孤立黑影
         if (dropDownShadow != null)
         {
-            var shadowAnim = new DoubleAnimationUsingKeyFrames();
-            shadowAnim.KeyFrames.Add(new DiscreteDoubleKeyFrame(0.0, KeyTime.FromTimeSpan(TimeSpan.Zero)));
-            shadowAnim.KeyFrames.Add(new SplineDoubleKeyFrame(1.0, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(140)), winUiSpline));
-            dropDownShadow.BeginAnimation(UIElement.OpacityProperty, shadowAnim);
+            const double Pad = 24.0;
+            var shadowStartRect = new System.Windows.Rect(-Pad, startTop - Pad, fullWidth + (Pad * 2.0), startHeight + (Pad * 2.0));
+            var shadowFullRect = new System.Windows.Rect(-Pad, -Pad, fullWidth + (Pad * 2.0), fullHeight + (Pad * 2.0));
+            var shadowClip = new RectangleGeometry(shadowStartRect);
+            dropDownShadow.Clip = shadowClip;
+            dropDownShadow.BeginAnimation(UIElement.OpacityProperty, null);
+            dropDownShadow.Opacity = 1.0;
+
+            var shadowClipAnim = new RectAnimationUsingKeyFrames();
+            shadowClipAnim.KeyFrames.Add(new DiscreteRectKeyFrame(shadowStartRect, KeyTime.FromTimeSpan(TimeSpan.Zero)));
+            shadowClipAnim.KeyFrames.Add(new SplineRectKeyFrame(shadowFullRect, KeyTime.FromTimeSpan(openDuration), winUiSplitSpline));
+            shadowClipAnim.Completed += (_, _) =>
+            {
+                if (dropDownShadow.Clip == shadowClip)
+                {
+                    dropDownShadow.Clip = null;
+                }
+            };
+            shadowClip.BeginAnimation(RectangleGeometry.RectProperty, shadowClipAnim);
         }
     }
 
@@ -253,6 +327,22 @@ public static partial class FluentComboBoxBehavior
     {
         if (sender is not System.Windows.Controls.ComboBox comboBox || comboBox.Template == null)
             return;
+
+        if (OpenStates.TryGetValue(comboBox, out var state))
+        {
+            state.SuppressOpeningRelease = false;
+        }
+
+        if (comboBox.Template.FindName("ToggleButton", comboBox) is ToggleButton toggleButton)
+        {
+            comboBox.Dispatcher.BeginInvoke(DispatcherPriority.Input, () =>
+            {
+                if (!comboBox.IsDropDownOpen)
+                {
+                    toggleButton.IsHitTestVisible = true;
+                }
+            });
+        }
 
         if (comboBox.Template.FindName("DropDownBorder", comboBox) is Border dropDownBorder)
         {
@@ -264,6 +354,7 @@ public static partial class FluentComboBoxBehavior
         if (comboBox.Template.FindName("DropDownShadow", comboBox) is Border dropDownShadow)
         {
             dropDownShadow.BeginAnimation(UIElement.OpacityProperty, null);
+            dropDownShadow.Clip = null;
             dropDownShadow.Opacity = 0.0;
         }
     }
@@ -344,6 +435,12 @@ public static partial class FluentComboBoxBehavior
     [LibraryImport("user32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static partial bool GetMonitorInfoW(nint hMonitor, ref MonitorInfo lpmi);
+
+    [LibraryImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static partial bool GetCursorPos(out NativePoint lpPoint);
+
+    private static bool TryGetCursorPos(out NativePoint point) => GetCursorPos(out point);
 
     [StructLayout(LayoutKind.Sequential)]
     private struct NativePoint

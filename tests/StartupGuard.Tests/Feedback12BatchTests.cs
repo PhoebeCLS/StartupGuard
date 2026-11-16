@@ -1802,7 +1802,7 @@ public class Feedback12BatchTests
         Assert.Contains("Text=\"自启与服务管理\"", mainXaml);
         Assert.DoesNotContain("Text=\"开机自启\"", mainXaml);
         Assert.DoesNotContain("BtnRefreshServiceStatus", mainXaml);
-        Assert.Contains("ServiceManagementContainer\" Visibility=\"Collapsed\"", mainXaml);
+        Assert.Contains("x:Name=\"CardExpanderServiceManagement\"", mainXaml);
         Assert.Contains("SharedStorageHelper.GetSharedLogsDirectory()", appCs);
         Assert.Contains("_differ.RefreshCategoryBaseline", svcCs);
         Assert.Contains("ApplyMonitorToggleUpdate", svcCs);
@@ -1833,9 +1833,9 @@ public class Feedback12BatchTests
         Assert.Contains("ListViewGlobalSearch_ScrollChanged", mainXaml);
         Assert.Contains("SyncGlobalSearchPagerVisibility", mainCs);
 
-        // 4. 自启与服务管理合并、默认折叠且自动刷新状态
+        // 4. 自启与服务管理合并、默认折叠且自动刷新状态（官方原生 CardExpander）
         Assert.Contains("Text=\"自启与服务管理\"", mainXaml);
-        Assert.Contains("HeaderToggleServiceManagement_MouseLeftButtonUp", mainXaml);
+        Assert.Contains("CardExpanderServiceManagement_Expanded", mainXaml);
         Assert.DoesNotContain("BtnRefreshServiceStatus_Click", mainCs);
         Assert.Contains("if (PageSettings?.Visibility == Visibility.Visible)\n                UpdateServiceStatusUI();", mainCs.Replace("\r\n", "\n"));
         Assert.Contains("Dispatcher.InvokeAsync(UpdateServiceStatusUI);", mainCs);
@@ -2350,7 +2350,7 @@ public class Feedback12BatchTests
         Assert.Single(diffShadowMatches);
         Assert.Contains("IsHitTestVisible=\"False\"", diffShadowMatches[0].Groups["attrs"].Value);
 
-        // 3. WinUI 3 原地展开 SplitOpen 下拉动效、隐藏式覆盖滚动条、侧栏高度窗帘动效与 TrayHost 清单契约
+        // 3. 官方 WPF-UI 原生控件与动画契约（默认 ComboBox 动画、CardExpander、Expander、TransitionAnimationProvider、隐藏式滚动条）
         Assert.Contains("Themes/FluentSharedStyles.xaml", appXaml);
         Assert.Contains("Microsoft YaHei UI", appXaml);
         Assert.Contains("FontFamily=\"{DynamicResource AppFont}\"", mainXaml);
@@ -2358,32 +2358,34 @@ public class Feedback12BatchTests
         Assert.Contains("<ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>", trayCsproj);
         Assert.Contains("FluentSharedStyles.xaml", trayCsproj);
         Assert.Contains("FluentBackdropHelper.cs", trayCsproj);
-        Assert.Contains("FluentComboBoxBehavior.cs", trayCsproj);
         Assert.Contains("FluentScrollBarBehavior.cs", trayCsproj);
+        Assert.Contains("FluentComboBoxBehavior.cs", trayCsproj);
         Assert.DoesNotContain("FluentFontHelper", trayCsproj);
         Assert.Contains("Themes/FluentSharedStyles.xaml", trayCs);
         Assert.Contains("ShowTrayContextMenuAtCursor", trayCs);
         Assert.Contains("SetForegroundWindow", trayCs);
         Assert.Contains("BtnNavBack", mainXaml);
+        Assert.Contains("TranslateNavBack", mainXaml);
+        Assert.Contains("PlayActiveContextMenuSubViewAnimation", mainCs);
+        Assert.Contains("<ui:CardExpander", mainXaml);
+        Assert.Contains("ContextMenuSubExpander", mainXaml);
         Assert.Contains("_navigationHistory", mainCs);
         Assert.Contains("FluentBackdropHelper.ApplyMica", mainCs);
+        Assert.Contains("TransitionAnimationProvider.ApplyTransition", mainCs);
+        Assert.Contains("IsScreenPointOverElement(BtnNavBack, lParam)", mainCs);
+        Assert.Contains("StripExpanderChromeRecursive", mainCs);
+        Assert.DoesNotContain("AnimateCollapsibleSection", mainCs);
 
-        Assert.Contains("FluentComboBoxBehavior.IsEnabled", sharedStyles);
         Assert.Contains("FluentScrollBarBehavior.IsEnabled", sharedStyles);
-        Assert.Contains("ClickMode=\"Release\"", sharedStyles);
-        Assert.Contains("ContentTemplateSelector=\"{TemplateBinding ItemTemplateSelector}\"", sharedStyles);
+        Assert.Contains("FluentComboBoxBehavior.IsEnabled", sharedStyles);
+        Assert.Contains("ClickMode=\"Press\"", sharedStyles);
+        Assert.Contains("StaysOpen=\"False\"", sharedStyles);
+        Assert.Contains("KeySpline=\"0,0,0,1\"", sharedStyles);
         Assert.Contains("Placement=\"Relative\"", sharedStyles);
-        Assert.Contains("PopupAnimation=\"None\"", sharedStyles);
-        Assert.Contains("x:Name=\"DropDownShadow\"", sharedStyles);
+        Assert.Contains("FromMilliseconds(250)", comboBehavior);
+        Assert.Contains("KeySpline(0.0, 0.0, 0.0, 1.0)", comboBehavior);
+        Assert.Contains("DropDownBorder_PreviewMouseLeftButtonUp", comboBehavior);
         Assert.DoesNotContain("ScaleTransform", sharedStyles);
-
-        Assert.Contains("PlacementMode.Relative", comboBehavior);
-        Assert.Contains("RectangleGeometry.RectProperty", comboBehavior);
-        Assert.Contains("ClampVerticalOffsetToWorkArea", comboBehavior);
-
-        Assert.Contains("FrameworkElement.MaxHeightProperty", mainCs);
-        Assert.Contains("TranslateTransform.YProperty", mainCs);
-        Assert.Contains("UIElement.OpacityProperty", mainCs);
         Assert.DoesNotContain("ScaleTransform.ScaleYProperty", mainCs);
 
         // 4. Inno Setup 1.0.2 -> 1.0.3 平滑升级与安装性能：快速 lzma2/fast、关闭慢速 RestartManager 扫描、单次合并 icacls 并支持显式版本升级提示
@@ -2399,5 +2401,61 @@ public class Feedback12BatchTests
         Assert.Contains("unins00*.dat", iss);
         Assert.Contains("CleanupSatelliteCultureDirs", iss);
         Assert.Contains("zh-Hans", iss);
+    }
+
+    [Fact]
+    public void Differ_PreExistingLegacyEntriesAreSuppressedByTimestampUnlessToggleSiblingExists()
+    {
+        string tempDir = Path.Combine(Path.GetTempPath(), $"StartupGuard_PreExisting_{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempDir);
+        try
+        {
+            string oldFile = Path.Combine(tempDir, "legacy.lnk");
+            string newFile = Path.Combine(tempDir, "fresh.lnk");
+            File.WriteAllText(oldFile, "old");
+            File.WriteAllText(newFile, "new");
+
+            var nowUtc = DateTime.UtcNow;
+            File.SetLastWriteTimeUtc(oldFile, nowUtc.AddDays(-3));
+            File.SetLastWriteTimeUtc(newFile, nowUtc.AddSeconds(2));
+
+            var differ = new StartupGuard.Service.Monitoring.SystemStateSnapshotDiffer
+            {
+                BaselineEstablishedUtc = nowUtc
+            };
+
+            var legacyLive = new StartupGuard.Service.Monitoring.SystemStateSnapshotDiffer.SnapshotItem(
+                StartupGuard.Core.Models.MonitorCategory.StartupItem,
+                oldFile,
+                oldFile,
+                "File: legacy.lnk");
+            var freshLive = new StartupGuard.Service.Monitoring.SystemStateSnapshotDiffer.SnapshotItem(
+                StartupGuard.Core.Models.MonitorCategory.StartupItem,
+                newFile,
+                newFile,
+                "File: fresh.lnk");
+
+            Assert.True(differ.IsPreExistingUnmonitoredEntry(legacyLive));
+            Assert.False(differ.IsPreExistingUnmonitoredEntry(freshLive));
+
+            // 若存在对称禁用/启用兄弟键（用户状态切换），不得被误跳过
+            string enabledPath = @"HKEY_USERS\S-1-5-21-TEST\Software\Classes\*\shellex\ContextMenuHandlers\DemoExt";
+            string disabledPath = @"HKEY_USERS\S-1-5-21-TEST\Software\Classes\*\shellex\-ContextMenuHandlers\DemoExt";
+            Assert.False(differ.HasToggleSiblingInSnapshot(disabledPath));
+            var snapshotDict = (System.Collections.Concurrent.ConcurrentDictionary<string, StartupGuard.Service.Monitoring.SystemStateSnapshotDiffer.SnapshotItem>)differ.CurrentSnapshot;
+            snapshotDict[enabledPath] = new StartupGuard.Service.Monitoring.SystemStateSnapshotDiffer.SnapshotItem(
+                StartupGuard.Core.Models.MonitorCategory.ClassicContextMenu,
+                enabledPath,
+                @"C:\demo.dll",
+                "Enabled=True");
+            Assert.True(differ.HasToggleSiblingInSnapshot(disabledPath));
+
+            string serviceCs = File.ReadAllText(Path.Combine(FindRepoRoot(), "src", "StartupGuard.Service", "Program.cs"));
+            Assert.Contains("_differ.AbsorbUserBaselineSnapshot(report.UserSid, _contextMenuEngine)", serviceCs);
+        }
+        finally
+        {
+            try { Directory.Delete(tempDir, recursive: true); } catch { }
+        }
     }
 }

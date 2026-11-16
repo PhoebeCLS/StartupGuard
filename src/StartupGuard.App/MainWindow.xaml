@@ -290,9 +290,11 @@
                                Height="28"
                                Padding="0"
                                Margin="0,0,6,0"
+                               Background="Transparent"
                                Appearance="Transparent"
                                BorderThickness="0"
                                CornerRadius="4"
+                               IsHitTestVisible="True"
                                Visibility="Collapsed"
                                Opacity="0"
                                ToolTip="返回上一页 (Alt+Left)"
@@ -409,11 +411,18 @@
                                 </Grid>
                             </RadioButton>
 
-                            <!-- 右键菜单二级子菜单（Win11 现代菜单置顶，其余场景按功能顺序排列） -->
-                            <StackPanel x:Name="ContextMenuSubListPanel" Visibility="Collapsed" ClipToBounds="True" MaxHeight="0" Margin="8,0,0,4" Opacity="0">
-                                <StackPanel.RenderTransform>
-                                    <TranslateTransform x:Name="TranslateContextMenuSubList" Y="-10"/>
-                                </StackPanel.RenderTransform>
+                            <!-- 右键菜单二级子菜单（采用 WPF-UI 原生 Expander 展开/收起动画） -->
+                            <Expander x:Name="ContextMenuSubExpander"
+                                      IsExpanded="False"
+                                      BorderThickness="0"
+                                      BorderBrush="Transparent"
+                                      Background="Transparent"
+                                      Padding="0"
+                                      Margin="8,0,0,4"
+                                      Loaded="ContextMenuSubExpander_Loaded"
+                                      Expanded="ContextMenuSubExpander_ExpandedCollapsed"
+                                      Collapsed="ContextMenuSubExpander_ExpandedCollapsed">
+                                <StackPanel x:Name="ContextMenuSubListPanel">
                                 <RadioButton x:Name="SubNavWin11Modern" Style="{StaticResource WinUi3NavSubItemStyle}" GroupName="ContextMenuSubNavGroup" Checked="SubNavContextMenu_Checked" Tag="Win11Modern">
                                     <Grid HorizontalAlignment="Stretch">
                                         <Grid.ColumnDefinitions>
@@ -448,7 +457,8 @@
                                 <RadioButton x:Name="SubNavClassicDragDrop" Style="{StaticResource WinUi3NavSubItemStyle}" GroupName="ContextMenuSubNavGroup" Checked="SubNavContextMenu_Checked" Tag="Scene_DragDrop" Content="右键拖拽"/>
                                 <RadioButton x:Name="SubNavClassicCommandStore" Style="{StaticResource WinUi3NavSubItemStyle}" GroupName="ContextMenuSubNavGroup" Checked="SubNavContextMenu_Checked" Tag="Scene_CommandStore" Content="公共引用"/>
                                 <RadioButton x:Name="SubNavClassicGuidBlocked" Style="{StaticResource WinUi3NavSubItemStyle}" GroupName="ContextMenuSubNavGroup" Checked="SubNavContextMenu_Checked" Tag="Scene_GuidBlocked" Content="GUID 锁"/>
-                            </StackPanel>
+                                </StackPanel>
+                            </Expander>
 
                             <!-- 3. 待审核中心 (带徽章计数) -->
                             <RadioButton x:Name="NavAuditCenter" Style="{StaticResource WinUi3NavRadioButtonStyle}" GroupName="MainNavGroup" Checked="Nav_Checked" Tag="PageAuditCenter">
@@ -1805,22 +1815,26 @@
                                 </Grid>
                             </Border>
 
-                            <!-- 设置卡片 4: 通知中心（支持折叠，默认收起；并自动检测系统通知开关状态） -->
-                            <Border Margin="0,0,0,14" Padding="16,14" CornerRadius="6" Background="{DynamicResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" BorderThickness="1">
-                                <StackPanel>
-                                    <Grid Background="Transparent" Cursor="Hand" Margin="0,0,0,2" MouseLeftButtonUp="HeaderToggleNotifications_MouseLeftButtonUp" ToolTip="点击展开或收起通知中心设置">
+                            <!-- 设置卡片 4: 通知中心（官方原生 CardExpander，默认收起） -->
+                            <ui:CardExpander x:Name="CardExpanderNotifications"
+                                             Margin="0,0,0,14"
+                                             Padding="16,14"
+                                             ContentPadding="16,12"
+                                             IsExpanded="False">
+                                <ui:CardExpander.Icon>
+                                    <ui:SymbolIcon Symbol="Alert24" FontSize="20" Foreground="#0078D4"/>
+                                </ui:CardExpander.Icon>
+                                <ui:CardExpander.Header>
+                                    <Grid>
                                         <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="Auto" />
                                             <ColumnDefinition Width="*" />
                                             <ColumnDefinition Width="Auto" />
-                                            <ColumnDefinition Width="Auto" />
                                         </Grid.ColumnDefinitions>
-                                        <ui:SymbolIcon Grid.Column="0" Symbol="Alert24" FontSize="20" Margin="0,0,14,0" Foreground="#0078D4" VerticalAlignment="Center"/>
-                                        <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="0,0,12,0">
+                                        <StackPanel Grid.Column="0" VerticalAlignment="Center" Margin="0,0,12,0">
                                             <TextBlock Text="通知中心" FontSize="14" Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
                                             <TextBlock Text="统一管理规则命中与右键菜单拦截的桌面系统通知提醒" FontSize="12" Foreground="{DynamicResource TextFillColorSecondaryBrush}" Margin="0,2,0,0" TextWrapping="Wrap"/>
                                         </StackPanel>
-                                        <ui:Button Grid.Column="2" x:Name="BtnSystemNotifyWarning"
+                                        <ui:Button Grid.Column="1" x:Name="BtnSystemNotifyWarning"
                                                    Content="⚠ 系统通知未开启（点击开启）"
                                                    Appearance="Transparent"
                                                    Foreground="#C42B1C"
@@ -1831,81 +1845,57 @@
                                                    Visibility="Collapsed"
                                                    Click="BtnSystemNotifyWarning_Click"
                                                    ToolTip="Windows 系统通知当前处于关闭状态，可能导致拦截提醒无法弹出。点击跳转到系统通知设置。"/>
-                                        <ui:SymbolIcon Grid.Column="3" Symbol="ChevronDown24" FontSize="18" Foreground="{DynamicResource TextFillColorSecondaryBrush}" VerticalAlignment="Center" Margin="6,0" RenderTransformOrigin="0.5,0.5">
-                                            <ui:SymbolIcon.RenderTransform>
-                                                <RotateTransform x:Name="RotateNotificationsChevron" Angle="0"/>
-                                            </ui:SymbolIcon.RenderTransform>
-                                        </ui:SymbolIcon>
                                     </Grid>
-
-                                    <Border x:Name="NotificationsDetailsContainer" ClipToBounds="True" MaxHeight="0" Visibility="Collapsed" Opacity="0">
-                                        <Border.RenderTransform>
-                                            <TranslateTransform x:Name="TranslateNotificationsDetails" Y="-10"/>
-                                        </Border.RenderTransform>
-                                        <StackPanel>
-                                            <Rectangle Height="1" Fill="{DynamicResource ControlStrokeColorDefaultBrush}" Margin="0,10,0,12"/>
-
-                                            <Grid Margin="0,0,0,12">
-                                                <Grid.ColumnDefinitions>
-                                                    <ColumnDefinition Width="Auto" />
-                                                    <ColumnDefinition Width="*" />
-                                                    <ColumnDefinition Width="Auto" />
-                                                </Grid.ColumnDefinitions>
-                                                <ui:SymbolIcon Grid.Column="0" Symbol="Alert24" FontSize="18" Margin="4,0,14,0" Foreground="#0078D4" VerticalAlignment="Center"/>
-                                                <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="0,0,16,0">
-                                                    <TextBlock Text="命中规则拦截通知" FontSize="14" Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
-                                                    <TextBlock Text="自动命中持久化拦截规则并执行处置时弹出系统通知" FontSize="12" Foreground="{DynamicResource TextFillColorSecondaryBrush}" Margin="0,3,0,0" TextWrapping="Wrap"/>
-                                                </StackPanel>
-                                                <ui:ToggleSwitch Grid.Column="2" x:Name="ToggleRuleHitNotification" IsChecked="True" Click="ToggleNotificationSetting_Click" HorizontalAlignment="Right" VerticalAlignment="Center"/>
-                                            </Grid>
-
-                                            <Rectangle Height="1" Fill="{DynamicResource ControlStrokeColorDefaultBrush}" Margin="36,0,0,12"/>
-
-                                            <Grid>
-                                                <Grid.ColumnDefinitions>
-                                                    <ColumnDefinition Width="Auto" />
-                                                    <ColumnDefinition Width="*" />
-                                                    <ColumnDefinition Width="Auto" />
-                                                </Grid.ColumnDefinitions>
-                                                <ui:SymbolIcon Grid.Column="0" Symbol="AppsListDetail24" FontSize="18" Margin="4,0,14,0" Foreground="#8764B8" VerticalAlignment="Center"/>
-                                                <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="0,0,16,0">
-                                                    <TextBlock Text="右键菜单静默拦截通知" FontSize="14" Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
-                                                    <TextBlock x:Name="TxtCtxNotifyHint" Text="先拦截后审核模式下屏蔽新右键菜单时弹出系统通知（弹窗审核模式自动禁用）" FontSize="12" Foreground="{DynamicResource TextFillColorSecondaryBrush}" Margin="0,3,0,0" TextWrapping="Wrap"/>
-                                                </StackPanel>
-                                                <ui:ToggleSwitch Grid.Column="2" x:Name="ToggleContextMenuNotification" IsChecked="True" Click="ToggleNotificationSetting_Click" HorizontalAlignment="Right" VerticalAlignment="Center"/>
-                                            </Grid>
-                                        </StackPanel>
-                                    </Border>
-                                </StackPanel>
-                            </Border>
-
-                            <!-- 设置卡片 5: 清理与维护中心（支持折叠，默认展开；整合自动裁剪、单版本定时校验、立即一键清理） -->
-                            <Border Margin="0,0,0,14" Padding="16,14" CornerRadius="6" Background="{DynamicResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" BorderThickness="1">
+                                </ui:CardExpander.Header>
                                 <StackPanel>
-                                    <Grid Background="Transparent" Cursor="Hand" Margin="0,0,0,4" MouseLeftButtonUp="HeaderToggleCleanupDetails_MouseLeftButtonUp" ToolTip="点击展开或收起清理与维护设置">
+                                    <Grid Margin="0,0,0,12">
                                         <Grid.ColumnDefinitions>
                                             <ColumnDefinition Width="Auto" />
                                             <ColumnDefinition Width="*" />
                                             <ColumnDefinition Width="Auto" />
                                         </Grid.ColumnDefinitions>
-                                        <ui:SymbolIcon Grid.Column="0" Symbol="Broom24" FontSize="20" Margin="0,0,14,0" Foreground="#8764B8" VerticalAlignment="Center"/>
-                                        <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="0,0,12,0">
-                                            <TextBlock Text="清理与维护中心" FontSize="14" Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
-                                            <TextBlock Text="集中配置日志自动裁剪、单版本规则定时校验与数据缓存立即清理" FontSize="12" Foreground="{DynamicResource TextFillColorSecondaryBrush}" Margin="0,2,0,0" TextWrapping="Wrap"/>
+                                        <ui:SymbolIcon Grid.Column="0" Symbol="Alert24" FontSize="18" Margin="4,0,14,0" Foreground="#0078D4" VerticalAlignment="Center"/>
+                                        <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="0,0,16,0">
+                                            <TextBlock Text="命中规则拦截通知" FontSize="14" Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
+                                            <TextBlock Text="自动命中持久化拦截规则并执行处置时弹出系统通知" FontSize="12" Foreground="{DynamicResource TextFillColorSecondaryBrush}" Margin="0,3,0,0" TextWrapping="Wrap"/>
                                         </StackPanel>
-                                        <ui:SymbolIcon Grid.Column="2" Symbol="ChevronDown24" FontSize="18" Foreground="{DynamicResource TextFillColorSecondaryBrush}" VerticalAlignment="Center" Margin="6,0" RenderTransformOrigin="0.5,0.5">
-                                            <ui:SymbolIcon.RenderTransform>
-                                                <RotateTransform x:Name="RotateCleanupChevron" Angle="180"/>
-                                            </ui:SymbolIcon.RenderTransform>
-                                        </ui:SymbolIcon>
+                                        <ui:ToggleSwitch Grid.Column="2" x:Name="ToggleRuleHitNotification" IsChecked="True" Click="ToggleNotificationSetting_Click" HorizontalAlignment="Right" VerticalAlignment="Center"/>
                                     </Grid>
 
-                                    <Border x:Name="CleanupDetailsContainer" ClipToBounds="True" Visibility="Visible" Opacity="1">
-                                        <Border.RenderTransform>
-                                            <TranslateTransform x:Name="TranslateCleanupDetails" Y="0"/>
-                                        </Border.RenderTransform>
-                                        <StackPanel>
-                                            <Rectangle Height="1" Fill="{DynamicResource ControlStrokeColorDefaultBrush}" Margin="0,8,0,12"/>
+                                    <Rectangle Height="1" Fill="{DynamicResource ControlStrokeColorDefaultBrush}" Margin="36,0,0,12"/>
+
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <ui:SymbolIcon Grid.Column="0" Symbol="AppsListDetail24" FontSize="18" Margin="4,0,14,0" Foreground="#8764B8" VerticalAlignment="Center"/>
+                                        <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="0,0,16,0">
+                                            <TextBlock Text="右键菜单静默拦截通知" FontSize="14" Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
+                                            <TextBlock x:Name="TxtCtxNotifyHint" Text="先拦截后审核模式下屏蔽新右键菜单时弹出系统通知（弹窗审核模式自动禁用）" FontSize="12" Foreground="{DynamicResource TextFillColorSecondaryBrush}" Margin="0,3,0,0" TextWrapping="Wrap"/>
+                                        </StackPanel>
+                                        <ui:ToggleSwitch Grid.Column="2" x:Name="ToggleContextMenuNotification" IsChecked="True" Click="ToggleNotificationSetting_Click" HorizontalAlignment="Right" VerticalAlignment="Center"/>
+                                    </Grid>
+                                </StackPanel>
+                            </ui:CardExpander>
+
+                            <!-- 设置卡片 5: 清理与维护中心（官方原生 CardExpander，默认展开） -->
+                            <ui:CardExpander x:Name="CardExpanderCleanup"
+                                             Margin="0,0,0,14"
+                                             Padding="16,14"
+                                             ContentPadding="16,12"
+                                             IsExpanded="True">
+                                <ui:CardExpander.Icon>
+                                    <ui:SymbolIcon Symbol="Broom24" FontSize="20" Foreground="#8764B8"/>
+                                </ui:CardExpander.Icon>
+                                <ui:CardExpander.Header>
+                                    <StackPanel VerticalAlignment="Center" Margin="0,0,12,0">
+                                        <TextBlock Text="清理与维护中心" FontSize="14" Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
+                                        <TextBlock Text="集中配置日志自动裁剪、单版本规则定时校验与数据缓存立即清理" FontSize="12" Foreground="{DynamicResource TextFillColorSecondaryBrush}" Margin="0,2,0,0" TextWrapping="Wrap"/>
+                                    </StackPanel>
+                                </ui:CardExpander.Header>
+                                <StackPanel>
 
                                             <!-- 5.1 历史日志自动清理 -->
                                             <Grid Margin="0,0,0,12">
@@ -1997,42 +1987,25 @@
                                                     <CheckBox x:Name="ChkCleanLocalCaches" Content="本地运行日志与临时缓存" IsChecked="True" MinWidth="0" Padding="4,1,0,1" Margin="0,0,16,4" FontSize="12"/>
                                                 </WrapPanel>
                                             </Grid>
-                                        </StackPanel>
-                                    </Border>
                                 </StackPanel>
-                            </Border>
+                            </ui:CardExpander>
 
-                            <!-- 设置卡片 6.5: 弹窗默认处置动作（可折叠） -->
-                            <Border Margin="0,0,0,14" CornerRadius="6" Background="{DynamicResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" BorderThickness="1">
+                            <!-- 设置卡片 6.5: 弹窗默认处置动作（官方原生 CardExpander） -->
+                            <ui:CardExpander x:Name="CardExpanderDefaultActions"
+                                             Margin="0,0,0,14"
+                                             Padding="16,14"
+                                             ContentPadding="16,12"
+                                             IsExpanded="False">
+                                <ui:CardExpander.Icon>
+                                    <ui:SymbolIcon Symbol="FlashCheckmark24" FontSize="20" Foreground="#0078D4"/>
+                                </ui:CardExpander.Icon>
+                                <ui:CardExpander.Header>
+                                    <StackPanel VerticalAlignment="Center" Margin="0,0,12,0">
+                                        <TextBlock Text="弹窗默认处置动作" FontSize="14" Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
+                                        <TextBlock Text="设置拦截审核弹窗中各类型项目默认选中的处置操作" FontSize="12" Margin="0,2,0,0" Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+                                    </StackPanel>
+                                </ui:CardExpander.Header>
                                 <StackPanel>
-                                    <Border Background="Transparent" Padding="16,12" Cursor="Hand" MouseLeftButtonUp="HeaderToggleDefaultActions_MouseLeftButtonUp">
-                                        <Grid>
-                                            <Grid.ColumnDefinitions>
-                                                <ColumnDefinition Width="Auto" />
-                                                <ColumnDefinition Width="*" />
-                                                <ColumnDefinition Width="Auto" />
-                                            </Grid.ColumnDefinitions>
-                                            <ui:SymbolIcon Grid.Column="0" Symbol="FlashCheckmark24" FontSize="20" Margin="0,0,14,0" Foreground="#0078D4" VerticalAlignment="Center"/>
-                                            <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="0,0,12,0">
-                                                <TextBlock Text="弹窗默认处置动作" FontSize="14" Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
-                                                <TextBlock Text="设置拦截审核弹窗中各类型项目默认选中的处置操作" FontSize="12" Margin="0,2,0,0" Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
-                                            </StackPanel>
-                                            <ui:Button Grid.Column="2" x:Name="BtnToggleDefaultActions" Appearance="Transparent" Padding="6" BorderThickness="0" Click="BtnToggleDefaultActions_Click">
-                                                <ui:SymbolIcon Symbol="ChevronDown24" FontSize="14" RenderTransformOrigin="0.5,0.5">
-                                                    <ui:SymbolIcon.RenderTransform>
-                                                        <RotateTransform x:Name="RotateDefaultActionsChevron" Angle="0"/>
-                                                    </ui:SymbolIcon.RenderTransform>
-                                                </ui:SymbolIcon>
-                                            </ui:Button>
-                                        </Grid>
-                                    </Border>
-
-                                    <Border x:Name="DefaultActionsContainer" Visibility="Collapsed" ClipToBounds="True" MaxHeight="0" Opacity="0" Padding="16,0,16,14">
-                                        <Border.RenderTransform>
-                                            <TranslateTransform Y="-10"/>
-                                        </Border.RenderTransform>
-                                        <StackPanel>
-                                            <Rectangle Height="1" Fill="{DynamicResource ControlStrokeColorDefaultBrush}" Margin="0,0,0,12"/>
 
                                             <Grid Margin="0,0,0,10">
                                                 <Grid.ColumnDefinitions>
@@ -2107,10 +2080,8 @@
                                                     <ComboBoxItem Content="删除注册项" Tag="DeleteEntry"/>
                                                 </ComboBox>
                                             </Grid>
-                                        </StackPanel>
-                                    </Border>
                                 </StackPanel>
-                            </Border>
+                            </ui:CardExpander>
 
                             <!-- 设置卡片 7: 运行日志 -->
                             <Border Margin="0,0,0,14" Padding="16,14" CornerRadius="6" Background="{DynamicResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" BorderThickness="1">
@@ -2139,37 +2110,23 @@
                                 </Grid>
                             </Border>
 
-                            <!-- 设置卡片 8: 自启与服务管理（默认折叠） -->
-                            <Border Margin="0,0,0,14" CornerRadius="6" Background="{DynamicResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" BorderThickness="1">
+                            <!-- 设置卡片 8: 自启与服务管理（官方原生 CardExpander，默认折叠） -->
+                            <ui:CardExpander x:Name="CardExpanderServiceManagement"
+                                             Margin="0,0,0,14"
+                                             Padding="16,14"
+                                             ContentPadding="16,12"
+                                             IsExpanded="False"
+                                             Expanded="CardExpanderServiceManagement_Expanded">
+                                <ui:CardExpander.Icon>
+                                    <ui:SymbolIcon Symbol="Shield24" FontSize="20" Foreground="{DynamicResource AccentTextFillColorPrimaryBrush}"/>
+                                </ui:CardExpander.Icon>
+                                <ui:CardExpander.Header>
+                                    <StackPanel VerticalAlignment="Center" Margin="0,0,12,0">
+                                        <TextBlock Text="自启与服务管理" FontSize="14" Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
+                                        <TextBlock Text="控制托盘常驻与后台监控服务的自启及运行状态" FontSize="12" Margin="0,2,0,0" Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+                                    </StackPanel>
+                                </ui:CardExpander.Header>
                                 <StackPanel>
-                                    <Border Background="Transparent" Padding="16,12" Cursor="Hand" MouseLeftButtonUp="HeaderToggleServiceManagement_MouseLeftButtonUp">
-                                        <Grid>
-                                            <Grid.ColumnDefinitions>
-                                                <ColumnDefinition Width="Auto" />
-                                                <ColumnDefinition Width="*" />
-                                                <ColumnDefinition Width="Auto" />
-                                            </Grid.ColumnDefinitions>
-                                            <ui:SymbolIcon Grid.Column="0" Symbol="Shield24" FontSize="20" Margin="0,0,14,0" Foreground="{DynamicResource AccentTextFillColorPrimaryBrush}" VerticalAlignment="Center"/>
-                                            <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="0,0,12,0">
-                                                <TextBlock Text="自启与服务管理" FontSize="14" Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
-                                                <TextBlock Text="控制托盘常驻与后台监控服务的自启及运行状态" FontSize="12" Margin="0,2,0,0" Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
-                                            </StackPanel>
-                                            <ui:Button Grid.Column="2" x:Name="BtnToggleServiceManagement" Appearance="Transparent" Padding="6" BorderThickness="0" Click="BtnToggleServiceManagement_Click">
-                                                <ui:SymbolIcon Symbol="ChevronDown24" FontSize="14" RenderTransformOrigin="0.5,0.5">
-                                                    <ui:SymbolIcon.RenderTransform>
-                                                        <RotateTransform x:Name="RotateServiceManagementChevron" Angle="0"/>
-                                                    </ui:SymbolIcon.RenderTransform>
-                                                </ui:SymbolIcon>
-                                            </ui:Button>
-                                        </Grid>
-                                    </Border>
-
-                                    <Border x:Name="ServiceManagementContainer" Visibility="Collapsed" ClipToBounds="True" MaxHeight="0" Opacity="0" Padding="16,0,16,14">
-                                        <Border.RenderTransform>
-                                            <TranslateTransform Y="-10"/>
-                                        </Border.RenderTransform>
-                                        <StackPanel>
-                                            <Rectangle Height="1" Fill="{DynamicResource ControlStrokeColorDefaultBrush}" Margin="0,0,0,12"/>
 
                                             <Grid Margin="0,0,0,10">
                                                 <Grid.ColumnDefinitions>
@@ -2206,27 +2163,26 @@
                                                 <ui:Button x:Name="BtnRestartService" Content="重启服务" Appearance="Secondary" Margin="0,0,8,0" Padding="12,5" FontSize="12" Click="BtnRestartService_Click"/>
                                                 <ui:Button x:Name="BtnRestartExplorer" Content="重启文件资源管理器" Appearance="Secondary" Margin="0,0,0,0" Padding="12,5" FontSize="12" Icon="{ui:SymbolIcon ArrowSync20}" Click="BtnRestartExplorer_Click"/>
                                             </WrapPanel>
-                                        </StackPanel>
-                                    </Border>
                                 </StackPanel>
-                            </Border>
+                            </ui:CardExpander>
 
                             <!-- 关于 -->
                             <TextBlock Text="关于" FontSize="18" FontWeight="SemiBold" Foreground="{DynamicResource TextFillColorPrimaryBrush}" Margin="0,8,0,12"/>
 
-                            <Border Padding="18,16" CornerRadius="6" Background="{DynamicResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" BorderThickness="1">
-                                <StackPanel>
-                                    <Grid Background="Transparent" Cursor="Hand" Margin="0,0,0,8" MouseLeftButtonUp="HeaderToggleAboutDetails_MouseLeftButtonUp" ToolTip="点击展开或收起详细信息">
+                            <ui:CardExpander x:Name="CardExpanderAbout"
+                                             Padding="18,16"
+                                             ContentPadding="18,14"
+                                             IsExpanded="True">
+                                <ui:CardExpander.Icon>
+                                    <ui:SymbolIcon Symbol="ShieldCheckmark24" FontSize="22" Foreground="#0078D4"/>
+                                </ui:CardExpander.Icon>
+                                <ui:CardExpander.Header>
+                                    <Grid>
                                         <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="Auto" />
                                             <ColumnDefinition Width="*" />
                                             <ColumnDefinition Width="Auto" />
-                                            <ColumnDefinition Width="Auto" />
                                         </Grid.ColumnDefinitions>
-                                        <Border Grid.Column="0" Width="40" Height="40" CornerRadius="8" Background="#0078D4" Margin="0,0,14,0">
-                                            <ui:SymbolIcon Symbol="ShieldCheckmark24" Foreground="White" FontSize="22" HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                                        </Border>
-                                        <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="0,0,16,0">
+                                        <StackPanel Grid.Column="0" VerticalAlignment="Center" Margin="0,0,16,0">
                                             <TextBlock Text="StartupGuard" FontWeight="SemiBold" FontSize="14" Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
                                             <StackPanel Orientation="Horizontal" Margin="0,3,0,0" VerticalAlignment="Center">
                                                 <TextBlock Text="Windows 启动项与右键菜单管理 · 作者：" FontSize="12" Foreground="{DynamicResource TextFillColorSecondaryBrush}" VerticalAlignment="Center"/>
@@ -2234,22 +2190,10 @@
                                                         Tag="https://github.com/PhoebeCLS" ToolTip="访问 @PhoebeCLS 的 GitHub 主页" Click="BtnStoreLink_Click" VerticalAlignment="Center"/>
                                             </StackPanel>
                                         </StackPanel>
-                                        <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,16,0">
-                                            <TextBlock x:Name="TxtAppAboutVersion" Text="版本 1.0.0" FontSize="12" Foreground="{DynamicResource TextFillColorTertiaryBrush}" VerticalAlignment="Center"/>
-                                        </StackPanel>
-                                        
-                                        <!-- Microsoft Store 规范的纯净 Chevron 展开/收起图标 (无方框，带旋转动效) -->
-                                        <ui:SymbolIcon Grid.Column="3" x:Name="IconAboutChevron" Symbol="ChevronDown24" FontSize="18" Foreground="{DynamicResource TextFillColorSecondaryBrush}" VerticalAlignment="Center" Margin="6,0" RenderTransformOrigin="0.5,0.5">
-                                            <ui:SymbolIcon.RenderTransform>
-                                                <RotateTransform x:Name="RotateAboutChevron" Angle="180"/>
-                                            </ui:SymbolIcon.RenderTransform>
-                                        </ui:SymbolIcon>
+                                        <TextBlock Grid.Column="1" x:Name="TxtAppAboutVersion" Text="版本 1.0.0" FontSize="12" Margin="0,0,12,0" Foreground="{DynamicResource TextFillColorTertiaryBrush}" VerticalAlignment="Center"/>
                                     </Grid>
-
-                                    <!-- 可折叠详细内容区 (带平滑高度与透明度裁剪容器) -->
-                                    <Border x:Name="AboutDetailsContainer" ClipToBounds="True">
-                                        <StackPanel x:Name="AboutDetailsPanel" Visibility="Visible">
-                                        <Rectangle Height="1" Fill="{DynamicResource ControlStrokeColorDefaultBrush}" Margin="0,8,0,14"/>
+                                </ui:CardExpander.Header>
+                                <StackPanel x:Name="AboutDetailsPanel">
 
                                         <!-- 链接区域 (效仿 Microsoft Store 无下划线弹性动效按钮) -->
                                         <TextBlock Text="链接" FontSize="13" Foreground="{DynamicResource TextFillColorPrimaryBrush}" Margin="0,0,0,10"/>
@@ -2317,10 +2261,8 @@
                                                 <TextBlock Text="ContextMenuMgr 致谢项目：WPF Fluent UI 现代化界面样式参考" FontSize="11" Foreground="{DynamicResource TextFillColorTertiaryBrush}" TextWrapping="Wrap" Margin="0,1,0,4"/>
                                             </StackPanel>
                                         </Grid>
-                                    </StackPanel>
-                                    </Border>
                                 </StackPanel>
-                            </Border>
+                            </ui:CardExpander>
                         </StackPanel>
                     </ScrollViewer>
                 </Grid>

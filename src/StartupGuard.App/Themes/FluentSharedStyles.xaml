@@ -3,7 +3,7 @@
                     xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
                     xmlns:themes="clr-namespace:StartupGuard.Themes">
 
-    <!-- 统一 WinUI 3 字体清晰度、轻量字重、隐藏式滚动条与原地 SplitOpen ComboBox -->
+    <!-- 统一应用内字体清晰度、隐藏式滚动条与 WinUI 3 SplitOpenThemeAnimation ComboBox -->
     <Style TargetType="{x:Type ScrollBar}" BasedOn="{StaticResource {x:Type ScrollBar}}">
         <Setter Property="themes:FluentScrollBarBehavior.IsEnabled" Value="True" />
     </Style>
@@ -17,7 +17,7 @@
         <Setter Property="FontFamily" Value="{DynamicResource AppFont}" />
         <Setter Property="FontWeight" Value="Normal" />
         <Setter Property="Padding" Value="11,5" />
-        <Setter Property="Margin" Value="3,1" />
+        <Setter Property="Margin" Value="4,1" />
         <Setter Property="MinHeight" Value="32" />
     </Style>
 
@@ -90,7 +90,7 @@
                                         <ToggleButton x:Name="ToggleButton"
                                                       HorizontalAlignment="Stretch"
                                                       VerticalAlignment="Stretch"
-                                                      ClickMode="Release"
+                                                      ClickMode="Press"
                                                       Focusable="False"
                                                       Foreground="{TemplateBinding Foreground}"
                                                       IsChecked="{Binding IsDropDownOpen, Mode=TwoWay, RelativeSource={RelativeSource TemplatedParent}}">
@@ -141,6 +141,7 @@
                                            Placement="Relative"
                                            PlacementTarget="{Binding ElementName=ContentBorder}"
                                            PopupAnimation="None"
+                                           StaysOpen="False"
                                            VerticalOffset="0">
                                         <Border x:Name="PopupShadowHost"
                                                 Background="{x:Null}"
@@ -151,7 +152,7 @@
                                                 TextOptions.TextFormattingMode="Display"
                                                 TextOptions.TextRenderingMode="ClearType">
                                             <Grid>
-                                                <!-- 独立阴影空层：避免 DropShadowEffect 触发子文字位图光栅化变糊 -->
+                                                <!-- 同步裁切阴影空层：不提前显形，完全随卡片边界 250ms 揭开 -->
                                                 <Border x:Name="DropDownShadow"
                                                         Background="{DynamicResource ComboBoxDropDownBackground}"
                                                         CornerRadius="8"
@@ -166,11 +167,10 @@
                                                     </Border.Effect>
                                                 </Border>
 
-                                                <!-- 清晰文字前景卡片：选中项原地对齐 + WinUI 3 SplitOpen 裁剪揭开（文字零缩放） -->
                                                 <Border x:Name="DropDownBorder"
                                                         MinWidth="{TemplateBinding ActualWidth}"
                                                         Margin="0"
-                                                        Padding="1,4"
+                                                        Padding="0,4"
                                                         Background="{DynamicResource ComboBoxDropDownBackground}"
                                                         BorderBrush="{DynamicResource ComboBoxDropDownBorderBrush}"
                                                         BorderThickness="1"
@@ -222,30 +222,20 @@
                             <Trigger.EnterActions>
                                 <BeginStoryboard>
                                     <Storyboard>
-                                        <DoubleAnimation Storyboard.TargetName="ChevronIcon"
-                                                         Storyboard.TargetProperty="(UIElement.RenderTransform).(RotateTransform.Angle)"
-                                                         From="0"
-                                                         To="180"
-                                                         Duration="0:0:0.167">
-                                            <DoubleAnimation.EasingFunction>
-                                                <CubicEase EasingMode="EaseInOut" />
-                                            </DoubleAnimation.EasingFunction>
-                                        </DoubleAnimation>
+                                        <DoubleAnimationUsingKeyFrames Storyboard.TargetName="ChevronIcon"
+                                                                       Storyboard.TargetProperty="(UIElement.RenderTransform).(RotateTransform.Angle)">
+                                            <SplineDoubleKeyFrame KeyTime="0:0:0.25" KeySpline="0,0,0,1" Value="180" />
+                                        </DoubleAnimationUsingKeyFrames>
                                     </Storyboard>
                                 </BeginStoryboard>
                             </Trigger.EnterActions>
                             <Trigger.ExitActions>
                                 <BeginStoryboard>
                                     <Storyboard>
-                                        <DoubleAnimation Storyboard.TargetName="ChevronIcon"
-                                                         Storyboard.TargetProperty="(UIElement.RenderTransform).(RotateTransform.Angle)"
-                                                         From="180"
-                                                         To="0"
-                                                         Duration="0:0:0.167">
-                                            <DoubleAnimation.EasingFunction>
-                                                <CubicEase EasingMode="EaseInOut" />
-                                            </DoubleAnimation.EasingFunction>
-                                        </DoubleAnimation>
+                                        <DoubleAnimationUsingKeyFrames Storyboard.TargetName="ChevronIcon"
+                                                                       Storyboard.TargetProperty="(UIElement.RenderTransform).(RotateTransform.Angle)">
+                                            <SplineDoubleKeyFrame KeyTime="0:0:0.25" KeySpline="0,0,0,1" Value="0" />
+                                        </DoubleAnimationUsingKeyFrames>
                                     </Storyboard>
                                 </BeginStoryboard>
                             </Trigger.ExitActions>

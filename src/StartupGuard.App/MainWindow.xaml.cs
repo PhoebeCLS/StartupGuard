@@ -493,7 +493,8 @@ public partial class MainWindow : FluentWindow
     }
 
     private bool IsPointOverTitleBarSearchControls(IntPtr lParam)
-        => IsScreenPointOverElement(TxtGlobalSearch, lParam)
+        => IsScreenPointOverElement(BtnNavBack, lParam)
+        || IsScreenPointOverElement(TxtGlobalSearch, lParam)
         || IsScreenPointOverElement(BtnGlobalSearchFilterToggle, lParam);
 
     private void TryDismissGlobalSearchOnTitleBarNonClientClick(int msg, IntPtr wParam, IntPtr lParam)
@@ -517,7 +518,7 @@ public partial class MainWindow : FluentWindow
 
         if (e.OriginalSource is DependencyObject source)
         {
-            if (IsVisualOrAncestor(source, TxtGlobalSearch) || IsVisualOrAncestor(source, BtnGlobalSearchFilterToggle))
+            if (IsVisualOrAncestor(source, BtnNavBack) || IsVisualOrAncestor(source, TxtGlobalSearch) || IsVisualOrAncestor(source, BtnGlobalSearchFilterToggle))
                 return;
             if (IsClickInsideInnerButton(source, TitleBarContainer))
                 return;
@@ -1633,7 +1634,7 @@ public partial class MainWindow : FluentWindow
 
         if (tag == "PageContextMenu")
         {
-            if (ContextMenuSubListPanel != null && ContextMenuSubListPanel.Visibility != Visibility.Visible)
+            if (ContextMenuSubExpander != null && !ContextMenuSubExpander.IsExpanded)
             {
                 ToggleContextMenuSubMenu(expand: true);
             }
@@ -1660,24 +1661,60 @@ public partial class MainWindow : FluentWindow
         }
         else
         {
-            if (ContextMenuSubListPanel != null && ContextMenuSubListPanel.Visibility != Visibility.Visible)
+            if (ContextMenuSubExpander != null && !ContextMenuSubExpander.IsExpanded)
             {
                 ToggleContextMenuSubMenu(expand: true);
             }
         }
     }
 
+    private void ContextMenuSubExpander_Loaded(object sender, RoutedEventArgs e)
+    {
+        if (ContextMenuSubExpander == null) return;
+        StripExpanderChromeRecursive(ContextMenuSubExpander, ContextMenuSubListPanel);
+    }
+
+    private static void StripExpanderChromeRecursive(DependencyObject root, DependencyObject? stopAt)
+    {
+        if (root == null || ReferenceEquals(root, stopAt))
+            return;
+
+        if (root is FrameworkElement fe && string.Equals(fe.Name, "ToggleButtonBorder", StringComparison.Ordinal))
+        {
+            fe.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        if (root is Border border)
+        {
+            border.Background = Brushes.Transparent;
+            border.BorderBrush = Brushes.Transparent;
+            border.BorderThickness = new Thickness(0);
+            border.CornerRadius = new CornerRadius(0);
+            border.Padding = new Thickness(0);
+        }
+
+        int count = VisualTreeHelper.GetChildrenCount(root);
+        for (int i = 0; i < count; i++)
+        {
+            StripExpanderChromeRecursive(VisualTreeHelper.GetChild(root, i), stopAt);
+        }
+    }
+
+    private void ContextMenuSubExpander_ExpandedCollapsed(object sender, RoutedEventArgs e)
+    {
+        if (RotateContextMenuChevron == null || ContextMenuSubExpander == null) return;
+        var rotateAnim = new DoubleAnimation(ContextMenuSubExpander.IsExpanded ? 180.0 : 0.0, TimeSpan.FromMilliseconds(167))
+        {
+            EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut }
+        };
+        RotateContextMenuChevron.BeginAnimation(RotateTransform.AngleProperty, rotateAnim);
+    }
+
     private void ToggleContextMenuSubMenu(bool? expand = null)
     {
-        if (ContextMenuSubListPanel == null || RotateContextMenuChevron == null) return;
-        bool currentState = ContextMenuSubListPanel.Tag as bool? ?? (ContextMenuSubListPanel.Visibility == Visibility.Visible);
-        bool targetState = expand ?? !currentState;
-        AnimateCollapsibleSection(
-            targetState,
-            RotateContextMenuChevron,
-            ContextMenuSubListPanel,
-            () => ContextMenuSubListPanel.Tag as bool? ?? false,
-            state => ContextMenuSubListPanel.Tag = state);
+        if (ContextMenuSubExpander == null) return;
+        ContextMenuSubExpander.IsExpanded = expand ?? !ContextMenuSubExpander.IsExpanded;
     }
 
     private void SubNavContextMenu_Checked(object sender, RoutedEventArgs e)
@@ -1685,6 +1722,7 @@ public partial class MainWindow : FluentWindow
         if (!_isInitialized) return;
         if (sender is System.Windows.Controls.RadioButton rb && rb.Tag is string tag)
         {
+            bool wasOnContextMenu = string.Equals(_currentPageTag, "PageContextMenu", StringComparison.Ordinal);
             SwitchToPage("PageContextMenu");
             if (tag.StartsWith("Scene_", StringComparison.OrdinalIgnoreCase))
             {
@@ -1697,6 +1735,11 @@ public partial class MainWindow : FluentWindow
                 _currentClassicFilter = tag;
             }
             ApplyClassicMenuFilter();
+
+            if (wasOnContextMenu)
+            {
+                PlayActiveContextMenuSubViewAnimation();
+            }
         }
     }
 
@@ -1706,10 +1749,31 @@ public partial class MainWindow : FluentWindow
         if (sender is not System.Windows.Controls.RadioButton rb || rb.Tag is not string tag)
             return;
 
+        bool wasOnContextMenu = string.Equals(_currentPageTag, "PageContextMenu", StringComparison.Ordinal);
         // 点击二级场景项自动切换到右键菜单页面
         SwitchToPage("PageContextMenu");
         _currentClassicScene = tag;
         ApplyClassicMenuFilter();
+
+        if (wasOnContextMenu)
+        {
+            PlayActiveContextMenuSubViewAnimation();
+        }
+    }
+
+    private void PlayActiveContextMenuSubViewAnimation()
+    {
+        if (FileTypesHeaderPanel?.Visibility == Visibility.Visible)
+        {
+            PlayTabSwitchAnimation(FileTypesHeaderPanel);
+        }
+
+        UIElement? target = MenuAnalysisPanel?.Visibility == Visibility.Visible
+            ? (UIElement)MenuAnalysisPanel
+            : (ContextMenuByAppScrollViewer?.Visibility == Visibility.Visible
+                ? ContextMenuByAppScrollViewer
+                : ListViewClassicMenu);
+        PlayTabSwitchAnimation(target);
     }
 
     private void BtnNavBack_Click(object sender, RoutedEventArgs e)
@@ -1741,6 +1805,11 @@ public partial class MainWindow : FluentWindow
     {
         if (_navigationHistory.Count == 0)
             return false;
+
+        if (GlobalSearchOverlay?.Visibility == Visibility.Visible)
+        {
+            CloseGlobalSearchOverlay(clearQuery: false);
+        }
 
         string prevTag = _navigationHistory.Pop();
         if (TranslateNavBack != null)
@@ -1835,22 +1904,12 @@ public partial class MainWindow : FluentWindow
                 if (page.Visibility != Visibility.Visible)
                 {
                     page.Visibility = Visibility.Visible;
-
-                    // 采用 Margin 像素对齐滑入 + Opacity 淡入，避免 RenderTransform 亚像素插值导致切页瞬间文字发糊
                     try
                     {
-                        page.RenderTransform = Transform.Identity;
-                        var winUiSpline = new KeySpline(0.1, 0.9, 0.2, 1.0);
-                        var fadeIn = new DoubleAnimationUsingKeyFrames();
-                        fadeIn.KeyFrames.Add(new DiscreteDoubleKeyFrame(0.35, KeyTime.FromTimeSpan(TimeSpan.Zero)));
-                        fadeIn.KeyFrames.Add(new SplineDoubleKeyFrame(1.0, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(150)), winUiSpline));
-
-                        var slideUp = new ThicknessAnimationUsingKeyFrames();
-                        slideUp.KeyFrames.Add(new DiscreteThicknessKeyFrame(new Thickness(0, 10, 0, 0), KeyTime.FromTimeSpan(TimeSpan.Zero)));
-                        slideUp.KeyFrames.Add(new SplineThicknessKeyFrame(new Thickness(0), KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(167)), winUiSpline));
-
-                        page.BeginAnimation(UIElement.OpacityProperty, fadeIn);
-                        page.BeginAnimation(FrameworkElement.MarginProperty, slideUp);
+                        Wpf.Ui.Animations.TransitionAnimationProvider.ApplyTransition(
+                            page,
+                            Wpf.Ui.Animations.Transition.FadeInWithSlide,
+                            150);
                     }
                     catch { }
                 }
@@ -2370,20 +2429,14 @@ public partial class MainWindow : FluentWindow
     private static void PlayTabSwitchAnimation(UIElement? element)
     {
         if (element == null) return;
-        var winUiSpline = new KeySpline(0.1, 0.9, 0.2, 1.0);
-        var fadeIn = new DoubleAnimationUsingKeyFrames();
-        fadeIn.KeyFrames.Add(new DiscreteDoubleKeyFrame(0.4, KeyTime.FromTimeSpan(TimeSpan.Zero)));
-        fadeIn.KeyFrames.Add(new SplineDoubleKeyFrame(1.0, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(140)), winUiSpline));
-        element.BeginAnimation(UIElement.OpacityProperty, fadeIn);
-
-        if (element is FrameworkElement fe)
+        try
         {
-            fe.RenderTransform = Transform.Identity;
-            var slide = new ThicknessAnimationUsingKeyFrames();
-            slide.KeyFrames.Add(new DiscreteThicknessKeyFrame(new Thickness(0, 8, 0, 0), KeyTime.FromTimeSpan(TimeSpan.Zero)));
-            slide.KeyFrames.Add(new SplineThicknessKeyFrame(new Thickness(0), KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(160)), winUiSpline));
-            fe.BeginAnimation(FrameworkElement.MarginProperty, slide);
+            Wpf.Ui.Animations.TransitionAnimationProvider.ApplyTransition(
+                element,
+                Wpf.Ui.Animations.Transition.FadeInWithSlide,
+                140);
         }
+        catch { }
     }
 
     private void Filter_Checked(object sender, RoutedEventArgs e)
@@ -4328,7 +4381,7 @@ public partial class MainWindow : FluentWindow
             if (NavContextMenu != null) NavContextMenu.IsChecked = true;
             if (ContextMenuSubListPanel != null)
             {
-                if (ContextMenuSubListPanel.Visibility != Visibility.Visible)
+                if (ContextMenuSubExpander != null && !ContextMenuSubExpander.IsExpanded)
                     ToggleContextMenuSubMenu(expand: true);
 
                 if (!string.IsNullOrEmpty(target.ContextMenuSubTag))
@@ -4644,12 +4697,6 @@ public partial class MainWindow : FluentWindow
         UserSettingsStore.SetMd5ValidationIdleOnly(ChkMd5ValidationIdleOnly.IsChecked == true);
     }
 
-    private bool _isCleanupExpanded = true;
-    private bool _isAboutExpanded = true;
-    private bool _isNotificationsExpanded = false;
-    private bool _isDefaultActionsExpanded = false;
-    private bool _isServiceManagementExpanded = false;
-
     private static bool IsClickInsideButton(DependencyObject? source)
     {
         while (source != null)
@@ -4661,30 +4708,9 @@ public partial class MainWindow : FluentWindow
         return false;
     }
 
-    private void HeaderToggleDefaultActions_MouseLeftButtonUp(object sender, System.Windows.Input.MouseButtonEventArgs e)
+    private void CardExpanderServiceManagement_Expanded(object sender, RoutedEventArgs e)
     {
-        if (IsClickInsideButton(e.OriginalSource as DependencyObject)) return;
-        BtnToggleDefaultActions_Click(sender, e);
-    }
-
-    private void BtnToggleDefaultActions_Click(object sender, RoutedEventArgs e)
-    {
-        _isDefaultActionsExpanded = !_isDefaultActionsExpanded;
-        AnimateCollapsibleSection(_isDefaultActionsExpanded, RotateDefaultActionsChevron, DefaultActionsContainer, () => _isDefaultActionsExpanded);
-    }
-
-    private void HeaderToggleServiceManagement_MouseLeftButtonUp(object sender, System.Windows.Input.MouseButtonEventArgs e)
-    {
-        if (IsClickInsideButton(e.OriginalSource as DependencyObject)) return;
-        BtnToggleServiceManagement_Click(sender, e);
-    }
-
-    private void BtnToggleServiceManagement_Click(object sender, RoutedEventArgs e)
-    {
-        _isServiceManagementExpanded = !_isServiceManagementExpanded;
-        if (_isServiceManagementExpanded)
-            UpdateServiceStatusUI();
-        AnimateCollapsibleSection(_isServiceManagementExpanded, RotateServiceManagementChevron, ServiceManagementContainer, () => _isServiceManagementExpanded);
+        UpdateServiceStatusUI();
     }
 
     private void CmbDefaultPopupAction_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -5019,150 +5045,6 @@ public partial class MainWindow : FluentWindow
     }
 
     #endregion
-
-    private void HeaderToggleNotifications_MouseLeftButtonUp(object sender, System.Windows.Input.MouseButtonEventArgs e)
-    {
-        if (IsClickInsideButton(e.OriginalSource as DependencyObject)) return;
-        BtnToggleNotificationsDetails_Click(sender, e);
-    }
-
-    private void HeaderToggleCleanupDetails_MouseLeftButtonUp(object sender, System.Windows.Input.MouseButtonEventArgs e)
-    {
-        if (IsClickInsideButton(e.OriginalSource as DependencyObject)) return;
-        BtnToggleCleanupDetails_Click(sender, e);
-    }
-
-    private void HeaderToggleAboutDetails_MouseLeftButtonUp(object sender, System.Windows.Input.MouseButtonEventArgs e)
-    {
-        if (IsClickInsideButton(e.OriginalSource as DependencyObject)) return;
-        BtnToggleAboutDetails_Click(sender, e);
-    }
-
-    private void BtnToggleNotificationsDetails_Click(object sender, RoutedEventArgs e)
-    {
-        _isNotificationsExpanded = !_isNotificationsExpanded;
-        AnimateCollapsibleSection(_isNotificationsExpanded, RotateNotificationsChevron, NotificationsDetailsContainer, () => _isNotificationsExpanded);
-    }
-
-    private void BtnToggleCleanupDetails_Click(object sender, RoutedEventArgs e)
-    {
-        _isCleanupExpanded = !_isCleanupExpanded;
-        AnimateCollapsibleSection(_isCleanupExpanded, RotateCleanupChevron, CleanupDetailsContainer, () => _isCleanupExpanded);
-    }
-
-    private void BtnToggleAboutDetails_Click(object sender, RoutedEventArgs e)
-    {
-        _isAboutExpanded = !_isAboutExpanded;
-        AnimateCollapsibleSection(_isAboutExpanded, RotateAboutChevron, AboutDetailsContainer, () => _isAboutExpanded);
-    }
-
-    private static void AnimateCollapsibleSection(
-        bool expand,
-        RotateTransform chevron,
-        FrameworkElement container,
-        Func<bool> currentExpandedState,
-        Action<bool>? setState = null)
-    {
-        setState?.Invoke(expand);
-
-        // WinUI 3 Expander 标准 FastOutSlowIn 曲线 (0.1, 0.9, 0.2, 1.0)
-        var winUiSpline = new KeySpline(0.1, 0.9, 0.2, 1.0);
-        container.LayoutTransform = Transform.Identity;
-        if (container.RenderTransform is not TranslateTransform translateTransform)
-        {
-            translateTransform = new TranslateTransform(0.0, expand ? -12.0 : 0.0);
-            container.RenderTransform = translateTransform;
-        }
-
-        var rotateAnim = new DoubleAnimationUsingKeyFrames();
-        rotateAnim.KeyFrames.Add(new SplineDoubleKeyFrame(expand ? 180.0 : 0.0, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(167)), winUiSpline));
-        chevron.BeginAnimation(RotateTransform.AngleProperty, rotateAnim);
-
-        if (expand)
-        {
-            double startHeight = container.Visibility == Visibility.Visible && container.ActualHeight > 0
-                ? container.ActualHeight
-                : 0.0;
-
-            container.BeginAnimation(FrameworkElement.MaxHeightProperty, null);
-            container.MaxHeight = double.PositiveInfinity;
-            container.Visibility = Visibility.Visible;
-
-            double availableWidth = container.Parent is FrameworkElement parentEl && parentEl.ActualWidth > 0
-                ? Math.Max(1.0, parentEl.ActualWidth - container.Margin.Left - container.Margin.Right)
-                : (container.ActualWidth > 0 ? container.ActualWidth : 600.0);
-            container.Measure(new Size(availableWidth, double.PositiveInfinity));
-            double targetHeight = Math.Max(container.DesiredSize.Height, 1.0);
-
-            container.MaxHeight = startHeight;
-            var expandDur = KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(200));
-
-            var heightAnim = new DoubleAnimationUsingKeyFrames();
-            heightAnim.KeyFrames.Add(new DiscreteDoubleKeyFrame(startHeight, KeyTime.FromTimeSpan(TimeSpan.Zero)));
-            heightAnim.KeyFrames.Add(new SplineDoubleKeyFrame(targetHeight, expandDur, winUiSpline));
-            heightAnim.Completed += (_, _) =>
-            {
-                if (currentExpandedState())
-                {
-                    container.BeginAnimation(FrameworkElement.MaxHeightProperty, null);
-                    container.MaxHeight = double.PositiveInfinity;
-                    translateTransform.BeginAnimation(TranslateTransform.YProperty, null);
-                    translateTransform.Y = 0.0;
-                }
-            };
-
-            var slideAnim = new DoubleAnimationUsingKeyFrames();
-            slideAnim.KeyFrames.Add(new DiscreteDoubleKeyFrame(startHeight > 0 ? translateTransform.Y : -12.0, KeyTime.FromTimeSpan(TimeSpan.Zero)));
-            slideAnim.KeyFrames.Add(new SplineDoubleKeyFrame(0.0, expandDur, winUiSpline));
-
-            var fadeIn = new DoubleAnimationUsingKeyFrames();
-            fadeIn.KeyFrames.Add(new DiscreteDoubleKeyFrame(startHeight > 0 ? container.Opacity : 0.0, KeyTime.FromTimeSpan(TimeSpan.Zero)));
-            fadeIn.KeyFrames.Add(new SplineDoubleKeyFrame(1.0, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(167)), winUiSpline));
-
-            container.BeginAnimation(FrameworkElement.MaxHeightProperty, heightAnim);
-            translateTransform.BeginAnimation(TranslateTransform.YProperty, slideAnim);
-            container.BeginAnimation(UIElement.OpacityProperty, fadeIn);
-        }
-        else
-        {
-            double startHeight = container.ActualHeight > 0
-                ? container.ActualHeight
-                : (double.IsFinite(container.MaxHeight) ? container.MaxHeight : container.DesiredSize.Height);
-
-            if (startHeight <= 0)
-            {
-                container.Visibility = Visibility.Collapsed;
-                container.MaxHeight = 0.0;
-                container.Opacity = 0.0;
-                return;
-            }
-
-            container.BeginAnimation(FrameworkElement.MaxHeightProperty, null);
-            container.MaxHeight = startHeight;
-            var collapseDur = KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(167));
-
-            var collapseAnim = new DoubleAnimationUsingKeyFrames();
-            collapseAnim.KeyFrames.Add(new DiscreteDoubleKeyFrame(startHeight, KeyTime.FromTimeSpan(TimeSpan.Zero)));
-            collapseAnim.KeyFrames.Add(new SplineDoubleKeyFrame(0.0, collapseDur, winUiSpline));
-            collapseAnim.Completed += (_, _) =>
-            {
-                if (!currentExpandedState())
-                {
-                    container.Visibility = Visibility.Collapsed;
-                }
-            };
-
-            var slideUp = new DoubleAnimationUsingKeyFrames();
-            slideUp.KeyFrames.Add(new SplineDoubleKeyFrame(-12.0, collapseDur, winUiSpline));
-
-            var fadeOut = new DoubleAnimationUsingKeyFrames();
-            fadeOut.KeyFrames.Add(new SplineDoubleKeyFrame(0.0, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(130)), winUiSpline));
-
-            container.BeginAnimation(FrameworkElement.MaxHeightProperty, collapseAnim);
-            translateTransform.BeginAnimation(TranslateTransform.YProperty, slideUp);
-            container.BeginAnimation(UIElement.OpacityProperty, fadeOut);
-        }
-    }
 
     private void UpdateSystemNotificationStatusBanner()
     {

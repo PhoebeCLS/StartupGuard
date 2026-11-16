@@ -36,6 +36,21 @@ public sealed unsafe partial class SystemStateSnapshotDiffer
     [LibraryImport(AdvApi32Dll, EntryPoint = "RegEnumKeyExW", StringMarshalling = StringMarshalling.Utf16)]
     private static partial int RegEnumKeyExW(nint hKey, uint dwIndex, char* lpName, ref uint lpcchName, nint lpReserved, nint lpClass, nint lpcchClass, out long lpftLastWriteTime);
 
+    [LibraryImport(AdvApi32Dll, EntryPoint = "RegQueryInfoKeyW")]
+    private static partial int RegQueryInfoKeyW(
+        nint hKey,
+        nint lpClass,
+        nint lpcchClass,
+        nint lpReserved,
+        nint lpcSubKeys,
+        nint lpcbMaxSubKeyLen,
+        nint lpcbMaxClassLen,
+        nint lpcValues,
+        nint lpcbMaxValueNameLen,
+        nint lpcbMaxValueLen,
+        nint lpcbSecurityDescriptor,
+        out long lpftLastWriteTime);
+
     [LibraryImport(AdvApi32Dll)]
     private static partial int RegCloseKey(nint hKey);
 
@@ -50,8 +65,12 @@ public sealed unsafe partial class SystemStateSnapshotDiffer
 
     private readonly ConcurrentDictionary<string, SnapshotItem> _cachedSnapshot = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, (DateTime Expiry, bool? ExpectedEnabled)> _suppressedRollbackMutations = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, bool> _hydratedUserSids = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, bool> _hydratedUserClassesSids = new(StringComparer.OrdinalIgnoreCase);
     private static readonly ConcurrentDictionary<string, (DateTime Expiry, TargetProgramFeatures? Probed)> _probedDllCache = new(StringComparer.OrdinalIgnoreCase);
     private readonly object _diffSyncLock = new();
+
+    internal DateTime BaselineEstablishedUtc { get; set; } = DateTime.UtcNow;
 
     public IReadOnlyDictionary<string, SnapshotItem> CurrentSnapshot => _cachedSnapshot;
 
@@ -454,13 +473,275 @@ public sealed unsafe partial class SystemStateSnapshotDiffer
         // 6. 扫描 Windows 策略与劫持点
         items.AddRange(ScanWindowsPolicies(activeUserSid));
 
-        _cachedSnapshot.Clear();
-        foreach (var item in items)
+        lock (_diffSyncLock)
         {
-            _cachedSnapshot[item.LocationKey] = item;
+            BaselineEstablishedUtc = DateTime.UtcNow;
+            _cachedSnapshot.Clear();
+            foreach (var item in items)
+            {
+                _cachedSnapshot[item.LocationKey] = item;
+            }
+
+            _hydratedUserSids.Clear();
+            _hydratedUserClassesSids.Clear();
+            if (!string.IsNullOrWhiteSpace(activeUserSid))
+            {
+                _hydratedUserSids[activeUserSid] = true;
+                if (IsUserClassesHiveMounted(activeUserSid))
+                    _hydratedUserClassesSids[activeUserSid] = true;
+            }
+            foreach (string loadedSid in InteractiveUserHiveResolver.GetAllLoadedUserSids())
+            {
+                _hydratedUserSids[loadedSid] = true;
+                if (IsUserClassesHiveMounted(loadedSid))
+                    _hydratedUserClassesSids[loadedSid] = true;
+            }
         }
 
         return items;
+    }
+
+    /// <summary>
+    /// 当交互用户登录后 SID 才被加载或 UsrClass.dat 延迟挂载完成时，
+    /// 静默吸收该用户已有的启动项、右键菜单与策略至基线快照，避免重启登录瞬间误报安装前旧项。
+    /// </summary>
+    public int AbsorbUserBaselineSnapshot(string? userSid, ContextMenuManagerEngine contextMenuEngine)
+    {
+        if (string.IsNullOrWhiteSpace(userSid))
+            return 0;
+
+        bool classesMounted = IsUserClassesHiveMounted(userSid);
+        var items = new List<SnapshotItem>();
+        items.AddRange(ScanStartupItems(userSid));
+        items.AddRange(ScanContextMenus(userSid, contextMenuEngine));
+        items.AddRange(ScanWindowsPolicies(userSid));
+
+        int added = 0;
+        lock (_diffSyncLock)
+        {
+            foreach (var item in items)
+            {
+                if (!_cachedSnapshot.ContainsKey(item.LocationKey))
+                {
+                    _cachedSnapshot[item.LocationKey] = item;
+                    added++;
+                }
+            }
+
+            _hydratedUserSids[userSid] = true;
+            if (classesMounted)
+                _hydratedUserClassesSids[userSid] = true;
+        }
+
+        return added;
+    }
+
+    private void EnsureAllActiveUsersHydratedLocked(string? activeUserSid, ContextMenuManagerEngine contextMenuEngine)
+    {
+        var candidateSids = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (!string.IsNullOrWhiteSpace(activeUserSid))
+            candidateSids.Add(activeUserSid);
+        foreach (string sid in InteractiveUserHiveResolver.GetAllLoadedUserSids())
+            candidateSids.Add(sid);
+
+        foreach (string sid in candidateSids)
+        {
+            bool needsUserHydration = !_hydratedUserSids.ContainsKey(sid);
+            bool classesReady = IsUserClassesHiveMounted(sid);
+            bool needsClassesHydration = classesReady && !_hydratedUserClassesSids.ContainsKey(sid);
+
+            if (!needsUserHydration && !needsClassesHydration)
+                continue;
+
+            var absorbed = new List<SnapshotItem>();
+            if (needsUserHydration)
+            {
+                absorbed.AddRange(ScanStartupItems(sid));
+                absorbed.AddRange(ScanWindowsPolicies(sid));
+            }
+            absorbed.AddRange(ScanContextMenus(sid, contextMenuEngine));
+
+            foreach (var item in absorbed)
+            {
+                _cachedSnapshot.TryAdd(item.LocationKey, item);
+            }
+
+            _hydratedUserSids[sid] = true;
+            if (classesReady)
+                _hydratedUserClassesSids[sid] = true;
+        }
+    }
+
+    private static bool IsUserClassesHiveMounted(string userSid)
+    {
+        if (!OperatingSystem.IsWindows() || string.IsNullOrWhiteSpace(userSid))
+            return false;
+
+        try
+        {
+            using var classesKey = Microsoft.Win32.Registry.Users.OpenSubKey($@"{userSid}_Classes", writable: false);
+            return classesKey != null;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    internal bool HasToggleSiblingInSnapshot(string locationKey)
+    {
+        if (string.IsNullOrWhiteSpace(locationKey))
+            return false;
+
+        foreach (string variant in BuildToggleSiblingKeys(locationKey))
+        {
+            if (!string.Equals(variant, locationKey, StringComparison.OrdinalIgnoreCase) &&
+                _cachedSnapshot.ContainsKey(variant))
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static IEnumerable<string> BuildToggleSiblingKeys(string locationKey)
+    {
+        if (locationKey.Contains(@"\shellex\ContextMenuHandlers\", StringComparison.OrdinalIgnoreCase))
+            yield return locationKey.Replace(@"\shellex\ContextMenuHandlers\", @"\shellex\-ContextMenuHandlers\", StringComparison.OrdinalIgnoreCase);
+        else if (locationKey.Contains(@"\shellex\-ContextMenuHandlers\", StringComparison.OrdinalIgnoreCase))
+            yield return locationKey.Replace(@"\shellex\-ContextMenuHandlers\", @"\shellex\ContextMenuHandlers\", StringComparison.OrdinalIgnoreCase);
+
+        int lastSlash = locationKey.LastIndexOf('\\');
+        if (lastSlash >= 0 && lastSlash < locationKey.Length - 1)
+        {
+            string parent = locationKey[..(lastSlash + 1)];
+            string leaf = locationKey[(lastSlash + 1)..];
+            string toggledLeaf = leaf.StartsWith('-') ? leaf[1..] : "-" + leaf;
+            yield return parent + toggledLeaf;
+        }
+    }
+
+    internal static bool TryGetLocationLastWriteUtc(string locationKey, out DateTime lastWriteUtc)
+    {
+        lastWriteUtc = default;
+        if (!OperatingSystem.IsWindows() || string.IsNullOrWhiteSpace(locationKey))
+            return false;
+
+        string trimmed = locationKey.Trim();
+        if (trimmed.StartsWith("Task:", StringComparison.OrdinalIgnoreCase))
+        {
+            string rel = trimmed[5..].Trim().TrimStart('\\');
+            string taskFile = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), @"System32\Tasks", rel);
+            if (File.Exists(taskFile))
+            {
+                lastWriteUtc = File.GetLastWriteTimeUtc(taskFile);
+                return true;
+            }
+            return false;
+        }
+
+        if (Path.IsPathRooted(trimmed) && File.Exists(trimmed))
+        {
+            lastWriteUtc = File.GetLastWriteTimeUtc(trimmed);
+            return true;
+        }
+
+        nint rootHive = 0;
+        string subKey = string.Empty;
+        if (trimmed.StartsWith("HKEY_LOCAL_MACHINE\\", StringComparison.OrdinalIgnoreCase))
+        {
+            rootHive = PrivilegedRollbackEngine.HKEY_LOCAL_MACHINE;
+            subKey = trimmed["HKEY_LOCAL_MACHINE\\".Length..];
+        }
+        else if (trimmed.StartsWith("HKLM\\", StringComparison.OrdinalIgnoreCase))
+        {
+            rootHive = PrivilegedRollbackEngine.HKEY_LOCAL_MACHINE;
+            subKey = trimmed["HKLM\\".Length..];
+        }
+        else if (trimmed.StartsWith("HKEY_USERS\\", StringComparison.OrdinalIgnoreCase))
+        {
+            rootHive = PrivilegedRollbackEngine.HKEY_USERS;
+            subKey = trimmed["HKEY_USERS\\".Length..];
+        }
+        else if (trimmed.StartsWith("HKU\\", StringComparison.OrdinalIgnoreCase))
+        {
+            rootHive = PrivilegedRollbackEngine.HKEY_USERS;
+            subKey = trimmed["HKU\\".Length..];
+        }
+
+        if (rootHive == 0 || string.IsNullOrWhiteSpace(subKey))
+            return false;
+
+        // 仅直接打开完整 LocationKey 作为子键读取其自身的 lpftLastWriteTime；
+        // 若末段是 ValueName（如 Run\MyApp），RegOpenKeyExW 会返回非 0，避免误用父键时间戳。
+        if (RegOpenKeyExW(rootHive, subKey, 0, KEY_READ | KEY_WOW64_64KEY, out nint hKey) != 0 &&
+            RegOpenKeyExW(rootHive, subKey, 0, KEY_READ, out hKey) != 0)
+        {
+            return false;
+        }
+
+        try
+        {
+            if (RegQueryInfoKeyW(hKey, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, out long fileTime) == 0 && fileTime > 0)
+            {
+                lastWriteUtc = DateTime.FromFileTimeUtc(fileTime);
+                return true;
+            }
+        }
+        finally
+        {
+            RegCloseKey(hKey);
+        }
+
+        return false;
+    }
+
+    internal bool IsPreExistingUnmonitoredEntry(SnapshotItem live)
+    {
+        if (HasToggleSiblingInSnapshot(live.LocationKey))
+            return false;
+
+        if (!TryGetLocationLastWriteUtc(live.LocationKey, out DateTime writeUtc))
+            return false;
+
+        return writeUtc < BaselineEstablishedUtc.AddSeconds(-5);
+    }
+
+    private void CollectDiffCandidateLocked(
+        SnapshotItem live,
+        List<(SnapshotItem Live, SnapshotItem? Previous)> changedList,
+        HashSet<string>? trackedKeys = null)
+    {
+        if (trackedKeys != null && trackedKeys.Contains(live.LocationKey))
+            return;
+
+        if (IsLiveItemSuppressed(live))
+        {
+            SyncSuppressedSnapshotAliases(live);
+            return;
+        }
+
+        if (!_cachedSnapshot.TryGetValue(live.LocationKey, out var existing))
+        {
+            if (IsPreExistingUnmonitoredEntry(live))
+            {
+                _cachedSnapshot[live.LocationKey] = live;
+                return;
+            }
+
+            changedList.Add((live, null));
+            trackedKeys?.Add(live.LocationKey);
+        }
+        else if (!string.Equals(existing.RawState, live.RawState, StringComparison.OrdinalIgnoreCase))
+        {
+            // 若前后均处于已启用状态（仅 Scene/描述文本等元数据差异），静默吸收至基线，不重复触发拦截弹窗
+            bool bothEnabled = TryParseLiveEnabledState(existing) == true && TryParseLiveEnabledState(live) == true;
+            if (!bothEnabled)
+            {
+                changedList.Add((live, existing));
+                trackedKeys?.Add(live.LocationKey);
+            }
+        }
     }
 
     /// <summary>
@@ -494,28 +775,13 @@ public sealed unsafe partial class SystemStateSnapshotDiffer
         List<(SnapshotItem Live, SnapshotItem? Previous)> changedList;
         lock (_diffSyncLock)
         {
+            EnsureAllActiveUsersHydratedLocked(activeUserSid, contextMenuEngine);
             var liveItems = ScanSingleTargetCategory(target, activeUserSid, contextMenuEngine);
             changedList = new List<(SnapshotItem Live, SnapshotItem? Previous)>();
 
             foreach (var live in liveItems)
             {
-                if (IsLiveItemSuppressed(live))
-                {
-                    SyncSuppressedSnapshotAliases(live);
-                    continue;
-                }
-
-                if (!_cachedSnapshot.TryGetValue(live.LocationKey, out var existing))
-                {
-                    changedList.Add((live, null));
-                }
-                else if (!string.Equals(existing.RawState, live.RawState, StringComparison.OrdinalIgnoreCase))
-                {
-                    // 若前后均处于已启用状态（仅 Scene/描述文本等元数据差异），静默吸收至基线，不重复触发拦截弹窗
-                    bool bothEnabled = TryParseLiveEnabledState(existing) == true && TryParseLiveEnabledState(live) == true;
-                    if (!bothEnabled)
-                        changedList.Add((live, existing));
-                }
+                CollectDiffCandidateLocked(live, changedList);
             }
 
             // 对右键菜单多场景连续注册 (* / Folder / Directory) 或 ImagePath 延迟写入执行统一稳态合并
@@ -551,27 +817,7 @@ public sealed unsafe partial class SystemStateSnapshotDiffer
                 // 合并等待期间同期新落盘的同批变更项，防止多场景写入分步到达时漏检
                 foreach (var live in liveItems)
                 {
-                    if (IsLiveItemSuppressed(live))
-                    {
-                        SyncSuppressedSnapshotAliases(live);
-                        continue;
-                    }
-                    if (trackedKeys.Contains(live.LocationKey))
-                        continue;
-                    if (!_cachedSnapshot.TryGetValue(live.LocationKey, out var existing))
-                    {
-                        changedList.Add((live, null));
-                        trackedKeys.Add(live.LocationKey);
-                    }
-                    else if (!string.Equals(existing.RawState, live.RawState, StringComparison.OrdinalIgnoreCase))
-                    {
-                        bool bothEnabled = TryParseLiveEnabledState(existing) == true && TryParseLiveEnabledState(live) == true;
-                        if (!bothEnabled)
-                        {
-                            changedList.Add((live, existing));
-                            trackedKeys.Add(live.LocationKey);
-                        }
-                    }
+                    CollectDiffCandidateLocked(live, changedList, trackedKeys);
                 }
             }
 
