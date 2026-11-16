@@ -338,6 +338,7 @@ public partial class MainWindow : FluentWindow
 
     public MainWindow()
     {
+        StartupGuard.Themes.FluentFontHelper.ApplyPreferredFont(this);
         InitializeComponent();
         _isInitialized = true;
         SyncAboutVersionDisplay();
@@ -474,10 +475,12 @@ public partial class MainWindow : FluentWindow
         const int WM_NCLBUTTONDOWN = 0x00A1;
         const int HTCAPTION = 2;
         if (msg == WM_NCLBUTTONDOWN && wParam.ToInt32() == HTCAPTION &&
-            GlobalSearchOverlay?.Visibility == Visibility.Visible &&
             !IsPointOverTitleBarSearchControls(lParam))
         {
-            CloseGlobalSearchOverlay(clearQuery: false);
+            if (GlobalSearchOverlay?.Visibility == Visibility.Visible)
+                CloseGlobalSearchOverlay(clearQuery: false);
+            else if (TxtGlobalSearch?.IsKeyboardFocusWithin == true)
+                System.Windows.Input.Keyboard.ClearFocus();
         }
     }
 
@@ -1662,7 +1665,8 @@ public partial class MainWindow : FluentWindow
     private void ToggleContextMenuSubMenu(bool? expand = null)
     {
         if (ContextMenuSubListPanel == null || RotateContextMenuChevron == null) return;
-        bool targetState = expand ?? (ContextMenuSubListPanel.Visibility != Visibility.Visible);
+        bool currentState = ContextMenuSubListPanel.Tag as bool? ?? (ContextMenuSubListPanel.Visibility == Visibility.Visible);
+        bool targetState = expand ?? !currentState;
         AnimateCollapsibleSection(
             targetState,
             RotateContextMenuChevron,
@@ -3764,7 +3768,10 @@ public partial class MainWindow : FluentWindow
     private void TxtGlobalSearch_PreviewMouseLeftButtonDown(object sender, System.Windows.Input.MouseButtonEventArgs e)
     {
         if (!_isInitialized || TxtGlobalSearch == null) return;
-        if (IsClickInsideInnerButton(e.OriginalSource as DependencyObject, TxtGlobalSearch))
+        // 输入中（光标竖线闪烁）拖动时交还 TextBox 原生划选文字；未激活输入时才按住拖动移动窗口
+        if (TxtGlobalSearch.IsKeyboardFocused ||
+            TxtGlobalSearch.IsKeyboardFocusWithin ||
+            IsClickInsideInnerButton(e.OriginalSource as DependencyObject, TxtGlobalSearch))
         {
             _globalSearchDragPending = false;
             _globalSearchDidDrag = false;
@@ -3774,6 +3781,7 @@ public partial class MainWindow : FluentWindow
         _globalSearchPressScreenPoint = TxtGlobalSearch.PointToScreen(e.GetPosition(TxtGlobalSearch));
         _globalSearchDragPending = true;
         _globalSearchDidDrag = false;
+        e.Handled = true;
     }
 
     private void TxtGlobalSearch_PreviewMouseMove(object sender, System.Windows.Input.MouseEventArgs e)
@@ -4967,15 +4975,11 @@ public partial class MainWindow : FluentWindow
     {
         setState?.Invoke(expand);
 
-        if (container.LayoutTransform is not ScaleTransform scaleTransform)
-        {
-            scaleTransform = new ScaleTransform(1.0, expand ? 0.0 : 1.0);
-            container.LayoutTransform = scaleTransform;
-        }
-
+        // 绝不使用 LayoutTransform.ScaleY 压扁/拉伸文字，改用 WinUI 3 Expander 式高度窗帘展开 + 轻滑入
+        container.LayoutTransform = Transform.Identity;
         if (container.RenderTransform is not TranslateTransform translateTransform)
         {
-            translateTransform = new TranslateTransform(0.0, expand ? -8.0 : 0.0);
+            translateTransform = new TranslateTransform(0.0, expand ? -10.0 : 0.0);
             container.RenderTransform = translateTransform;
         }
 
@@ -4987,25 +4991,75 @@ public partial class MainWindow : FluentWindow
 
         if (expand)
         {
+            double startHeight = container.Visibility == Visibility.Visible && container.ActualHeight > 0
+                ? container.ActualHeight
+                : 0.0;
+
+            container.BeginAnimation(FrameworkElement.MaxHeightProperty, null);
+            container.MaxHeight = double.PositiveInfinity;
             container.Visibility = Visibility.Visible;
-            var easeOut = new CubicEase { EasingMode = EasingMode.EaseOut };
-            scaleTransform.BeginAnimation(ScaleTransform.ScaleYProperty, new DoubleAnimation(1.0, TimeSpan.FromMilliseconds(220)) { EasingFunction = easeOut });
-            translateTransform.BeginAnimation(TranslateTransform.YProperty, new DoubleAnimation(0.0, TimeSpan.FromMilliseconds(220)) { EasingFunction = easeOut });
-            container.BeginAnimation(UIElement.OpacityProperty, new DoubleAnimation(1.0, TimeSpan.FromMilliseconds(180)) { EasingFunction = easeOut });
+
+            double availableWidth = container.Parent is FrameworkElement parentEl && parentEl.ActualWidth > 0
+                ? Math.Max(1.0, parentEl.ActualWidth - container.Margin.Left - container.Margin.Right)
+                : (container.ActualWidth > 0 ? container.ActualWidth : 600.0);
+            container.Measure(new Size(availableWidth, double.PositiveInfinity));
+            double targetHeight = Math.Max(container.DesiredSize.Height, 1.0);
+
+            container.MaxHeight = startHeight;
+            var easeOut = new ExponentialEase { EasingMode = EasingMode.EaseOut, Exponent = 4.5 };
+            var heightAnim = new DoubleAnimation(startHeight, targetHeight, TimeSpan.FromMilliseconds(240))
+            {
+                EasingFunction = easeOut
+            };
+            heightAnim.Completed += (_, _) =>
+            {
+                if (currentExpandedState())
+                {
+                    container.BeginAnimation(FrameworkElement.MaxHeightProperty, null);
+                    container.MaxHeight = double.PositiveInfinity;
+                }
+            };
+
+            container.BeginAnimation(FrameworkElement.MaxHeightProperty, heightAnim);
+            translateTransform.BeginAnimation(
+                TranslateTransform.YProperty,
+                new DoubleAnimation(startHeight > 0 ? translateTransform.Y : -10.0, 0.0, TimeSpan.FromMilliseconds(240)) { EasingFunction = easeOut });
+            container.BeginAnimation(
+                UIElement.OpacityProperty,
+                new DoubleAnimation(1.0, TimeSpan.FromMilliseconds(180)) { EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut } });
         }
         else
         {
+            double startHeight = container.ActualHeight > 0
+                ? container.ActualHeight
+                : (double.IsFinite(container.MaxHeight) ? container.MaxHeight : container.DesiredSize.Height);
+
+            if (startHeight <= 0)
+            {
+                container.Visibility = Visibility.Collapsed;
+                container.MaxHeight = 0.0;
+                container.Opacity = 0.0;
+                return;
+            }
+
+            container.BeginAnimation(FrameworkElement.MaxHeightProperty, null);
+            container.MaxHeight = startHeight;
+
             var easeIn = new CubicEase { EasingMode = EasingMode.EaseIn };
-            var scaleAnim = new DoubleAnimation(0.0, TimeSpan.FromMilliseconds(180)) { EasingFunction = easeIn };
-            scaleAnim.Completed += (_, _) =>
+            var collapseAnim = new DoubleAnimation(startHeight, 0.0, TimeSpan.FromMilliseconds(190))
+            {
+                EasingFunction = easeIn
+            };
+            collapseAnim.Completed += (_, _) =>
             {
                 if (!currentExpandedState())
                 {
                     container.Visibility = Visibility.Collapsed;
                 }
             };
-            scaleTransform.BeginAnimation(ScaleTransform.ScaleYProperty, scaleAnim);
-            translateTransform.BeginAnimation(TranslateTransform.YProperty, new DoubleAnimation(-8.0, TimeSpan.FromMilliseconds(180)) { EasingFunction = easeIn });
+
+            container.BeginAnimation(FrameworkElement.MaxHeightProperty, collapseAnim);
+            translateTransform.BeginAnimation(TranslateTransform.YProperty, new DoubleAnimation(-10.0, TimeSpan.FromMilliseconds(190)) { EasingFunction = easeIn });
             container.BeginAnimation(UIElement.OpacityProperty, new DoubleAnimation(0.0, TimeSpan.FromMilliseconds(140)) { EasingFunction = easeIn });
         }
     }

@@ -102,6 +102,7 @@ public partial class InterceptionDiffDialogWindow : FluentWindow
         ConfidenceEvaluationResult initialEval,
         Action<IReadOnlyList<UserDecisionPayload>> onBatchDecisionMade)
     {
+        StartupGuard.Themes.FluentFontHelper.ApplyPreferredFont(this);
         InitializeComponent();
         _onBatchDecisionMade = onBatchDecisionMade;
         CardsItemsControl.ItemsSource = _capturedItems;
@@ -401,6 +402,16 @@ public partial class InterceptionDiffDialogWindow : FluentWindow
 
     public static bool ShouldUseCloseButton(int selectedCount) => selectedCount <= 0;
 
+    public static string ResolveAllowActionButtonText(int totalCount, int selectedCount, bool rememberRule)
+    {
+        if (rememberRule)
+        {
+            return "允许并创建规则";
+        }
+
+        return "允许选中";
+    }
+
     public static string ResolvePrimaryActionButtonText(int totalCount, int selectedCount, bool rememberRule)
     {
         if (ShouldUseCloseButton(selectedCount))
@@ -410,7 +421,7 @@ public partial class InterceptionDiffDialogWindow : FluentWindow
 
         if (rememberRule)
         {
-            return "创建规则并阻止";
+            return "阻止并创建规则";
         }
 
         return totalCount > 1 ? "阻止所选" : "阻止";
@@ -429,6 +440,35 @@ public partial class InterceptionDiffDialogWindow : FluentWindow
             LocationKey = item.LocationKey,
             DisplayName = item.DisplayName
         }).ToList();
+    }
+
+    public static List<UserDecisionPayload> BuildPartialSelectedDecisions(
+        IReadOnlyList<CapturedItemViewModel> selectedItems,
+        bool isAllowSelected,
+        bool rememberRule,
+        RuleMatchMode ruleMode)
+    {
+        var decisions = new List<UserDecisionPayload>(selectedItems.Count);
+        foreach (var item in selectedItems)
+        {
+            InterceptionAction chosen = isAllowSelected
+                ? InterceptionAction.Allow
+                : (item.SelectedAction?.Action ?? InterceptionAction.RollbackToDemand);
+
+            decisions.Add(new UserDecisionPayload
+            {
+                CorrelationId = item.CorrelationId,
+                ChosenAction = chosen,
+                RememberRule = rememberRule,
+                ChosenRuleMode = ruleMode,
+                Category = item.Evaluation.Target.Category,
+                TargetBinaryPath = item.TargetPath,
+                LocationKey = item.LocationKey,
+                DisplayName = item.DisplayName
+            });
+        }
+
+        return decisions;
     }
 
     public static List<UserDecisionPayload> BuildSubmittedDecisions(
@@ -478,9 +518,11 @@ public partial class InterceptionDiffDialogWindow : FluentWindow
             ? $"检测到 {totalCount} 个新增启动或扩展项"
             : "检测到新增启动或扩展项";
 
+        BtnAllowSelected.Content = ResolveAllowActionButtonText(totalCount, selectedCount, rememberRule);
+        BtnAllowSelected.IsEnabled = !useClose;
         BtnBlockSelected.Content = ResolvePrimaryActionButtonText(totalCount, selectedCount, rememberRule);
         BtnBlockSelected.Appearance = useClose ? ControlAppearance.Secondary : ControlAppearance.Danger;
-        ChkPermanentBlock.IsEnabled = !useClose;
+        ChkPermanentBlock.IsEnabled = true;
     }
 
     private void HeaderDragMove_MouseLeftButtonDown(object sender, System.Windows.Input.MouseButtonEventArgs e)
@@ -525,30 +567,53 @@ public partial class InterceptionDiffDialogWindow : FluentWindow
         UpdateHeaderSummary();
     }
 
-    private void BtnAllowAll_Click(object sender, RoutedEventArgs e)
+    private void BtnAllowSelected_Click(object sender, RoutedEventArgs e)
     {
-        SubmitDecisions(isAllowAll: true);
+        SubmitSelectedItems(isAllowSelected: true);
     }
 
     private void BtnBlockSelected_Click(object sender, RoutedEventArgs e)
     {
-        SubmitDecisions(isAllowAll: false);
+        SubmitSelectedItems(isAllowSelected: false);
     }
 
-    private void SubmitDecisions(bool isAllowAll)
+    private void SubmitSelectedItems(bool isAllowSelected)
     {
         if (_decisionSent) return;
-        _decisionSent = true;
+
+        var selectedItems = _capturedItems.Where(item => item.IsSelected).ToList();
+        if (selectedItems.Count == 0)
+        {
+            if (!isAllowSelected)
+            {
+                // 未勾选任何项目点击“关闭”：对剩余项发送 DismissWithoutChange 并关闭弹窗
+                Close();
+            }
+            return;
+        }
 
         bool rememberRule = ChkPermanentBlock.IsChecked == true;
         var ruleMode = (CmbRuleMode.SelectedIndex == 1)
             ? RuleMatchMode.StrictCurrentVersion
             : RuleMatchMode.PermanentAdaptive;
 
-        var decisions = BuildSubmittedDecisions(_capturedItems, isAllowAll, rememberRule, ruleMode);
-
+        var decisions = BuildPartialSelectedDecisions(selectedItems, isAllowSelected, rememberRule, ruleMode);
         _onBatchDecisionMade(decisions);
-        Close();
+
+        foreach (var handled in selectedItems)
+        {
+            handled.PropertyChanged -= OnCapturedItemPropertyChanged;
+            _capturedItems.Remove(handled);
+        }
+
+        if (_capturedItems.Count == 0)
+        {
+            _decisionSent = true;
+            Close();
+            return;
+        }
+
+        UpdateHeaderSummary();
     }
 
     private void BtnItemDetail_Click(object sender, RoutedEventArgs e)

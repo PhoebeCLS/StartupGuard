@@ -86,6 +86,7 @@ internal static partial class Program
             {
                 Source = new Uri("pack://application:,,,/Themes/FluentSharedStyles.xaml", UriKind.Absolute)
             });
+            StartupGuard.Themes.FluentFontHelper.ApplyPreferredFont();
         }
         catch { }
     }

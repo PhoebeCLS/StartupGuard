@@ -10,7 +10,7 @@
                 <ui:ControlsDictionary />
                 <ResourceDictionary Source="Themes/FluentSharedStyles.xaml" />
             </ResourceDictionary.MergedDictionaries>
-            <FontFamily x:Key="AppFont">Segoe UI Variable Text, Segoe UI Variable, Microsoft YaHei UI, Segoe UI</FontFamily>
+            <FontFamily x:Key="AppFont">Microsoft YaHei UI, Segoe UI Variable Text, Segoe UI</FontFamily>
         </ResourceDictionary>
     </Application.Resources>
 </Application>

@@ -63,8 +63,11 @@ AppPublisher={#MyAppPublisher}
 AppPublisherURL={#MyAppURL}
 AppSupportURL={#MyAppURL}/issues
 AppUpdatesURL={#MyAppURL}/releases
-DefaultDirName={autopf}\{#MyAppName}
+DefaultDirName={code:GetDefaultInstallDir}
 DefaultGroupName={#MyAppName}
+UsePreviousAppDir=yes
+UsePreviousTasks=yes
+DisableDirPage=auto
 DisableProgramGroupPage=yes
 DisableWelcomePage=no
 DisableReadyPage=no
@@ -76,12 +79,13 @@ OutputBaseFilename={#OutputBaseFilename}
 SetupIconFile=app.ico
 UninstallDisplayIcon={app}\{#MyAppExeName}
 UninstallDisplayName={#MyAppDisplayName}
-Compression=lzma2/max
+Compression=lzma2/fast
 SolidCompression=yes
+LZMAUseSeparateProcess=yes
 WizardStyle=modern dynamic
 PrivilegesRequired=admin
-CloseApplications=yes
-RestartApplications=yes
+CloseApplications=no
+RestartApplications=no
 MinVersion=10.0.19041
 
 [Languages]
@@ -119,6 +123,7 @@ Filename: "{app}\{#MyAppExeName}"; Description: "立即启动 StartupGuard"; Fla
 [Code]
 var
   UninstDeleteUserData: Boolean;
+  ProcessesStopped: Boolean;
 #if DeployMode == "framework-dependent"
   DotNetDownloadPage: TDownloadWizardPage;
 #endif
@@ -133,22 +138,69 @@ begin
     Result := -1;
 end;
 
+function GetPreviousInstalledDir: string;
+var
+  Dir: string;
+begin
+  Result := '';
+  if RegQueryStringValue(HKLM, 'SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{' + '{#MyAppId}' + '}_is1', 'InstallLocation', Dir) and (Dir <> '') then
+  begin
+    Result := RemoveBackslashUnlessRoot(Dir);
+    exit;
+  end;
+  if RegQueryStringValue(HKLM, 'SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{' + '{#MyAppId}' + '}}_is1', 'InstallLocation', Dir) and (Dir <> '') then
+  begin
+    Result := RemoveBackslashUnlessRoot(Dir);
+    exit;
+  end;
+  if RegQueryStringValue(HKLM, 'SOFTWARE\{#MyAppName}', 'InstallDir', Dir) and (Dir <> '') then
+  begin
+    Result := RemoveBackslashUnlessRoot(Dir);
+    exit;
+  end;
+end;
+
+function GetDefaultInstallDir(Param: string): string;
+var
+  PrevDir: string;
+begin
+  PrevDir := GetPreviousInstalledDir;
+  if PrevDir <> '' then
+    Result := PrevDir
+  else
+    Result := ExpandConstant('{autopf}\{#MyAppName}');
+end;
+
+function GetPreviousInstalledVersion: string;
+var
+  Ver: string;
+begin
+  Result := '';
+  if RegQueryStringValue(HKLM, 'SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{' + '{#MyAppId}' + '}_is1', 'DisplayVersion', Ver) and (Ver <> '') then
+  begin
+    Result := Ver;
+    exit;
+  end;
+  if RegQueryStringValue(HKLM, 'SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{' + '{#MyAppId}' + '}}_is1', 'DisplayVersion', Ver) and (Ver <> '') then
+  begin
+    Result := Ver;
+    exit;
+  end;
+end;
+
 procedure StopRunningProcessesAndService(SleepAfterMs: Integer);
 var
   ScExe, KillExe, LogmanExe: string;
+  ScResult: Integer;
 begin
   ScExe := ExpandConstant('{sys}\sc.exe');
   KillExe := ExpandConstant('{sys}\taskkill.exe');
   LogmanExe := ExpandConstant('{sys}\logman.exe');
 
-  RunHidden(ScExe, 'stop {#MyServiceName}');
-  Sleep(500);
-  RunHidden(KillExe, '/F /T /IM {#MyTrayExeName}');
-  RunHidden(KillExe, '/F /T /IM {#MyAppExeName}');
-  RunHidden(KillExe, '/F /T /IM {#MyProbeExeName}');
-  RunHidden(KillExe, '/F /T /IM {#MyServiceExeName}');
+  ScResult := RunHidden(ScExe, 'stop {#MyServiceName}');
+  RunHidden(KillExe, '/F /T /IM {#MyTrayExeName} /IM {#MyAppExeName} /IM {#MyProbeExeName} /IM {#MyServiceExeName}');
   RunHidden(LogmanExe, 'stop StartupGuard_KernelRegistry_Trace -ets');
-  if SleepAfterMs > 0 then
+  if (ScResult = 0) and (SleepAfterMs > 0) then
     Sleep(SleepAfterMs);
 end;
 
@@ -257,15 +309,6 @@ begin
   Result := True;
 end;
 
-procedure InitializeWizard;
-begin
-  DotNetDownloadPage := CreateDownloadPage(
-    '.NET 10 桌面运行时',
-    '正在准备下载并安装 .NET 10 Desktop Runtime ({#TargetArch})...',
-    @OnDotNetDownloadProgress);
-  DotNetDownloadPage.ShowBaseNameInsteadOfUrl := True;
-end;
-
 function EnsureDotNet10DesktopRuntime: string;
 var
   InstallerPath, InstallArgs: string;
@@ -321,6 +364,26 @@ begin
     Result := '.NET 10 桌面运行时安装未完成 (ExitCode=' + IntToStr(ExitCode) + ')，请手动安装后重试或改用 self-contained 版本。';
 end;
 #endif
+
+procedure InitializeWizard;
+var
+  PrevVer: string;
+begin
+#if DeployMode == "framework-dependent"
+  DotNetDownloadPage := CreateDownloadPage(
+    '.NET 10 桌面运行时',
+    '正在准备下载并安装 .NET 10 Desktop Runtime ({#TargetArch})...',
+    @OnDotNetDownloadProgress);
+  DotNetDownloadPage.ShowBaseNameInsteadOfUrl := True;
+#endif
+  PrevVer := GetPreviousInstalledVersion;
+  if PrevVer <> '' then
+  begin
+    WizardForm.WelcomeLabel2.Caption :=
+      '检测到当前已安装 StartupGuard v' + PrevVer + '。' + #13#10 + #13#10 +
+      '点击“下一步”将自动覆盖升级程序与后台服务至 v{#ProductVersion}，并完整保留您原有的拦截规则、审计日志与个人设置。';
+  end;
+end;
 
 procedure CleanupLegacyUninstallArtifacts(const AppDir: string);
 var
@@ -380,7 +443,8 @@ begin
   if Result <> '' then
     exit;
 #endif
-  StopRunningProcessesAndService(500);
+  StopRunningProcessesAndService(250);
+  ProcessesStopped := True;
   CleanupLegacyUninstallArtifacts(ExpandConstant('{app}'));
 end;
 
@@ -389,7 +453,14 @@ var
   AppDir: string;
 begin
   AppDir := ExpandConstant('{app}');
-  StopRunningProcessesAndService(400);
+  if not ProcessesStopped then
+  begin
+    StopRunningProcessesAndService(250);
+    ProcessesStopped := True;
+  end;
+
+  if not DirExists(AppDir) then
+    exit;
 
   // 跨部署模式或自旧版升级时清理遗留运行库、附属语言目录与旧卸载程序，防止残留与双条卸载记录
   DeleteFile(AppDir + '\{#MyServiceExeName}');
@@ -413,15 +484,15 @@ var
   AppDataRoot, ScExe, ServiceExePath: string;
 begin
   AppDataRoot := ExpandConstant('{commonappdata}\{#MyAppName}');
-  RunHidden(ExpandConstant('{sys}\icacls.exe'), '"' + AppDataRoot + '" /grant *S-1-5-32-545:(OI)(CI)F /T');
-  RunHidden(ExpandConstant('{sys}\icacls.exe'), '"' + AppDataRoot + '" /grant Users:(OI)(CI)F /T');
-  RunHidden(ExpandConstant('{sys}\icacls.exe'), '"' + AppDataRoot + '" /grant *S-1-1-0:(OI)(CI)F /T');
+  RunHidden(ExpandConstant('{sys}\icacls.exe'), '"' + AppDataRoot + '" /grant *S-1-5-32-545:(OI)(CI)F *S-1-1-0:(OI)(CI)F /T /Q /C');
 
   ScExe := ExpandConstant('{sys}\sc.exe');
   ServiceExePath := ExpandConstant('{app}\{#MyServiceExeName}');
 
-  RunHidden(ScExe, 'create {#MyServiceName} binPath= "\"' + ServiceExePath + '\" --service" start= auto DisplayName= "StartupGuard Core Monitoring Service"');
-  RunHidden(ScExe, 'config {#MyServiceName} binPath= "\"' + ServiceExePath + '\" --service" start= auto DisplayName= "StartupGuard Core Monitoring Service"');
+  if RunHidden(ScExe, 'query {#MyServiceName}') <> 0 then
+    RunHidden(ScExe, 'create {#MyServiceName} binPath= "\"' + ServiceExePath + '\" --service" start= auto DisplayName= "StartupGuard Core Monitoring Service"')
+  else
+    RunHidden(ScExe, 'config {#MyServiceName} binPath= "\"' + ServiceExePath + '\" --service" start= auto DisplayName= "StartupGuard Core Monitoring Service"');
   RunHidden(ScExe, 'description {#MyServiceName} "Windows 11 原生底层启动项与上下文菜单安全守护服务 (StartupGuard)"');
   RunHidden(ScExe, 'start {#MyServiceName}');
 end;

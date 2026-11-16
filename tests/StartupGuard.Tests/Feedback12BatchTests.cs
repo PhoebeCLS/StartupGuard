@@ -1331,6 +1331,7 @@ public class Feedback12BatchTests
         Assert.DoesNotContain("TxtGlobalSearch_GotFocus", mainCs);
         Assert.Contains("TxtGlobalSearch_PreviewMouseMove", mainXaml);
         Assert.Contains("TxtGlobalSearch_PreviewMouseLeftButtonUp", mainXaml);
+        Assert.Contains("IsKeyboardFocusWithin", mainCs);
         Assert.Contains("DragMove()", mainCs);
 
         Assert.DoesNotContain("Content=\"全部自启\"", mainXaml);
@@ -2270,12 +2271,22 @@ public class Feedback12BatchTests
         // 4. 源码契约：未勾选任何项目时“阻止”自动切为“关闭”；直接 X 关闭发送 DismissWithoutChange；主窗口允许手动处置
         string repoRoot = FindRepoRoot();
         string diffCs = File.ReadAllText(Path.Combine(repoRoot, "src", "StartupGuard.TrayHost", "InterceptionDiffDialogWindow.xaml.cs"));
+        string diffXaml = File.ReadAllText(Path.Combine(repoRoot, "src", "StartupGuard.TrayHost", "InterceptionDiffDialogWindow.xaml"));
         string serviceCs = File.ReadAllText(Path.Combine(repoRoot, "src", "StartupGuard.Service", "Program.cs"));
         string trayCs = File.ReadAllText(Path.Combine(repoRoot, "src", "StartupGuard.TrayHost", "Program.cs"));
         string mainXaml = File.ReadAllText(Path.Combine(repoRoot, "src", "StartupGuard.App", "MainWindow.xaml"));
         string mainCs = File.ReadAllText(Path.Combine(repoRoot, "src", "StartupGuard.App", "MainWindow.xaml.cs"));
 
         Assert.Contains("ResolvePrimaryActionButtonText", diffCs);
+        Assert.Contains("ResolveAllowActionButtonText", diffCs);
+        Assert.Contains("BuildPartialSelectedDecisions", diffCs);
+        Assert.Contains("\"允许选中\"", diffCs);
+        Assert.Contains("\"允许并创建规则\"", diffCs);
+        Assert.Contains("\"阻止并创建规则\"", diffCs);
+        Assert.Contains("BtnAllowSelected", diffXaml);
+        Assert.Contains("Content=\"永久\"", diffXaml);
+        Assert.Contains("Content=\"仅此版本\"", diffXaml);
+        Assert.DoesNotContain("BtnAllowAll", diffXaml);
         Assert.Contains("return \"关闭\";", diffCs);
         Assert.Contains("ControlAppearance.Secondary", diffCs);
         Assert.Contains("BuildDismissDecisions", diffCs);
@@ -2298,21 +2309,27 @@ public class Feedback12BatchTests
         string appXaml = File.ReadAllText(Path.Combine(repoRoot, "src", "StartupGuard.App", "App.xaml"));
         string appCs = File.ReadAllText(Path.Combine(repoRoot, "src", "StartupGuard.App", "App.xaml.cs"));
         string sharedStyles = File.ReadAllText(Path.Combine(repoRoot, "src", "StartupGuard.App", "Themes", "FluentSharedStyles.xaml"));
+        string comboBehavior = File.ReadAllText(Path.Combine(repoRoot, "src", "StartupGuard.App", "Themes", "FluentComboBoxBehavior.cs"));
         string trayCsproj = File.ReadAllText(Path.Combine(repoRoot, "src", "StartupGuard.TrayHost", "StartupGuard.TrayHost.csproj"));
         string trayCs = File.ReadAllText(Path.Combine(repoRoot, "src", "StartupGuard.TrayHost", "Program.cs"));
         string diffXaml = File.ReadAllText(Path.Combine(repoRoot, "src", "StartupGuard.TrayHost", "InterceptionDiffDialogWindow.xaml"));
         string iss = File.ReadAllText(Path.Combine(repoRoot, "installer", "StartupGuard.iss"));
 
-        // 1. 字体 ClearType 与像素对齐契约：两套主窗体启用 Display + ClearType + ClearTypeHint + UseLayoutRounding 且无小数像素字号
+        // 1. 字体 ClearType 与像素对齐契约：两套主窗体启用 Ideal DirectWrite + ClearType + ClearTypeHint + UseLayoutRounding 且无小数像素字号、无过度 Bold 粗体
         foreach (string xaml in new[] { mainXaml, diffXaml })
         {
             Assert.Contains("UseLayoutRounding=\"True\"", xaml);
             Assert.Contains("SnapsToDevicePixels=\"True\"", xaml);
-            Assert.Contains("TextOptions.TextFormattingMode=\"Display\"", xaml);
+            Assert.Contains("TextOptions.TextFormattingMode=\"Ideal\"", xaml);
             Assert.Contains("TextOptions.TextRenderingMode=\"ClearType\"", xaml);
             Assert.Contains("RenderOptions.ClearTypeHint=\"Enabled\"", xaml);
+            Assert.Contains("FontFamily=\"{DynamicResource AppFont}\"", xaml);
             Assert.DoesNotMatch(@"FontSize=""[0-9]+\.[0-9]+""", xaml);
+            Assert.DoesNotContain("FontWeight=\"Bold\"", xaml);
         }
+
+        Assert.DoesNotContain("ControlFillColorDefaultBrush\" \r\n                    BorderBrush", mainXaml);
+        Assert.Matches(@"Background=""Transparent""\s+BorderThickness=""0""", mainXaml);
 
         Assert.DoesNotMatch(@"FontSize\s*=\s*[0-9]+\.[0-9]+", mainCs);
         Assert.DoesNotMatch(@"FontSize\s*=\s*[0-9]+\.[0-9]+", appCs);
@@ -2333,26 +2350,45 @@ public class Feedback12BatchTests
         Assert.Single(diffShadowMatches);
         Assert.Contains("IsHitTestVisible=\"False\"", diffShadowMatches[0].Groups["attrs"].Value);
 
-        // 3. Tuba / WinUI 3 下拉动效与 TrayHost 清单契约
+        // 3. WinUI 3 原地展开 SplitOpen 下拉动效、隐藏式覆盖滚动条、侧栏高度窗帘动效与 TrayHost 清单契约
         Assert.Contains("Themes/FluentSharedStyles.xaml", appXaml);
+        Assert.Contains("Microsoft YaHei UI", appXaml);
+        Assert.Contains("FontFamily=\"{DynamicResource AppFont}\"", mainXaml);
+        Assert.Contains("FontFamily=\"{DynamicResource AppFont}\"", diffXaml);
         Assert.Contains("<ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>", trayCsproj);
         Assert.Contains("FluentSharedStyles.xaml", trayCsproj);
+        Assert.Contains("FluentComboBoxBehavior.cs", trayCsproj);
+        Assert.Contains("FluentFontHelper.cs", trayCsproj);
+        Assert.Contains("FluentScrollBarBehavior.cs", trayCsproj);
         Assert.Contains("Themes/FluentSharedStyles.xaml", trayCs);
 
-        Assert.Contains("Placement=\"Center\"", sharedStyles);
+        Assert.Contains("FluentComboBoxBehavior.IsEnabled", sharedStyles);
+        Assert.Contains("FluentScrollBarBehavior.IsEnabled", sharedStyles);
+        Assert.Contains("ClickMode=\"Release\"", sharedStyles);
+        Assert.Contains("ContentTemplateSelector=\"{TemplateBinding ItemTemplateSelector}\"", sharedStyles);
+        Assert.Contains("Placement=\"Relative\"", sharedStyles);
         Assert.Contains("PopupAnimation=\"None\"", sharedStyles);
         Assert.Contains("x:Name=\"DropDownShadow\"", sharedStyles);
-        Assert.Contains("(ScaleTransform.ScaleY)", sharedStyles);
-        Assert.Contains("(TranslateTransform.Y)", sharedStyles);
-        Assert.Contains("TargetProperty=\"Opacity\"", sharedStyles);
+        Assert.DoesNotContain("ScaleTransform", sharedStyles);
 
-        Assert.Contains("ScaleTransform.ScaleYProperty", mainCs);
+        Assert.Contains("PlacementMode.Relative", comboBehavior);
+        Assert.Contains("RectangleGeometry.RectProperty", comboBehavior);
+        Assert.Contains("ClampVerticalOffsetToWorkArea", comboBehavior);
+
+        Assert.Contains("FrameworkElement.MaxHeightProperty", mainCs);
         Assert.Contains("TranslateTransform.YProperty", mainCs);
-        Assert.Contains("OpacityProperty", mainCs);
+        Assert.Contains("UIElement.OpacityProperty", mainCs);
+        Assert.DoesNotContain("ScaleTransform.ScaleYProperty", mainCs);
 
-        // 4. Inno Setup 1.0.2 -> 1.0.3 平滑升级：修复 AppId 多余右括号并清理遗留卸载记录与附属语言目录
+        // 4. Inno Setup 1.0.2 -> 1.0.3 平滑升级与安装性能：快速 lzma2/fast、关闭慢速 RestartManager 扫描、单次合并 icacls 并支持显式版本升级提示
         Assert.Contains("AppId={{{#MyAppId}}", iss);
         Assert.DoesNotContain("AppId={{{#MyAppId}}}", iss);
+        Assert.Contains("UsePreviousAppDir=yes", iss);
+        Assert.Contains("GetPreviousInstalledVersion", iss);
+        Assert.Contains("GetDefaultInstallDir", iss);
+        Assert.Contains("Compression=lzma2/fast", iss);
+        Assert.Contains("CloseApplications=no", iss);
+        Assert.Contains("/F /T /IM {#MyTrayExeName} /IM {#MyAppExeName}", iss);
         Assert.Contains("CleanupLegacyUninstallArtifacts", iss);
         Assert.Contains("unins00*.dat", iss);
         Assert.Contains("CleanupSatelliteCultureDirs", iss);

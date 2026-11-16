@@ -46,7 +46,10 @@ public sealed class SystemStartupItemsManager
         public bool CanDeepAnalyze => IsShellExtension || Category is MonitorCategory.ClassicContextMenu or MonitorCategory.ModernContextMenu;
         public string GlobalSearchTypeLabel => GlobalSearchHelper.GetTypeBadgeText(Category, LocationKey, ScopeScene);
 
-        public sealed record StartupStateOption(string Title, InterceptionAction Action, uint StartType, bool DelayedAuto);
+        public sealed record StartupStateOption(string Title, InterceptionAction Action, uint StartType, bool DelayedAuto)
+        {
+            public override string ToString() => Title;
+        }
 
         private static readonly StartupStateOption[] ServiceStateOptions =
         [

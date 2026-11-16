@@ -81,6 +81,7 @@ public partial class App : Application
         }
 
         base.OnStartup(e);
+        StartupGuard.Themes.FluentFontHelper.ApplyPreferredFont();
         try
         {
             string themePref = StartupGuard.Core.Configuration.UserSettingsStore.GetThemePreference();

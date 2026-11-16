@@ -818,7 +818,11 @@ public static class Program
 
         string diagnosticText = decision.ChosenAction == InterceptionAction.DismissWithoutChange
             ? "用户关闭弹窗或未勾选处置项，未修改系统或规则，可在日志中手动操作"
-            : (effectiveRememberRule ? "用户在拦截提示弹窗中选择阻止并沉淀永久规则" : "用户在拦截提示弹窗中做出的处置决策");
+            : (effectiveRememberRule
+                ? (decision.ChosenAction == InterceptionAction.Allow
+                    ? "用户在拦截提示弹窗中选择允许并沉淀规则"
+                    : "用户在拦截提示弹窗中选择阻止并沉淀永久规则")
+                : "用户在拦截提示弹窗中做出的处置决策");
 
         _sqliteRepo.WriteAuditLog(
             eval?.MatchedRule?.RuleId,
