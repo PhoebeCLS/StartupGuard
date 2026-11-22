@@ -79,6 +79,7 @@ public sealed unsafe partial class SystemStateSnapshotDiffer
     internal DateTime BaselineEstablishedUtc { get; set; } = DateTime.UtcNow;
 
     public Action<IReadOnlyList<string>>? OnPersistedBaselinesEvicted { get; set; }
+    public Action<IReadOnlyList<KnownBaselineRecord>>? OnPersistedBaselinesUpserted { get; set; }
 
     public IReadOnlyDictionary<string, SnapshotItem> CurrentSnapshot => _cachedSnapshot;
 
@@ -90,7 +91,32 @@ public sealed unsafe partial class SystemStateSnapshotDiffer
         if (!_hydratedUserSids.ContainsKey(userSid))
             return false;
 
-        return !IsUserClassesHiveMounted(userSid) || _hydratedUserClassesSids.ContainsKey(userSid);
+        if (_hydratedUserClassesSids.ContainsKey(userSid))
+            return true;
+
+        return !IsUserClassesHiveMounted(userSid);
+    }
+
+    public void PurgeExpiredTransientCaches()
+    {
+        var nowUtc = DateTime.UtcNow;
+        foreach (var kv in _suppressedRollbackMutations)
+        {
+            if (nowUtc >= kv.Value.Expiry)
+                _suppressedRollbackMutations.TryRemove(kv.Key, out _);
+        }
+
+        foreach (var kv in _recentlyRemovedItems)
+        {
+            if ((nowUtc - kv.Value.RemovedUtc).TotalSeconds > 15.0)
+                _recentlyRemovedItems.TryRemove(kv.Key, out _);
+        }
+
+        foreach (var kv in _probedDllCache)
+        {
+            if (nowUtc >= kv.Value.Expiry)
+                _probedDllCache.TryRemove(kv.Key, out _);
+        }
     }
 
     public void LoadPersistedBaselines(IEnumerable<KnownBaselineRecord> records)
@@ -983,11 +1009,11 @@ public sealed unsafe partial class SystemStateSnapshotDiffer
         bool? liveEnabled = TryParseLiveEnabledState(live);
         bool liveDisabled = liveEnabled == false || IsRestrictedOrRollbackRawState(live.Category, live.RawState);
 
-        // 1. 瞬态删建复用判定（仅限 StartupItem 如 OneDrive 开机先删 Run 值后短时间写回同路径）：10 秒内曾移除、文件仍在磁盘且非从受限态复活
+        // 1. 瞬态删建复用判定（仅限 StartupItem 如 OneDrive 开机先删 Run 值后短时间写回同路径）：5 秒内曾移除、文件仍在磁盘且非从受限态复活
         if (live.Category == MonitorCategory.StartupItem &&
             _recentlyRemovedItems.TryGetValue(live.LocationKey, out var removed))
         {
-            if ((nowUtc - removed.RemovedUtc).TotalSeconds <= 10.0)
+            if ((nowUtc - removed.RemovedUtc).TotalSeconds <= 5.0)
             {
                 bool prevDisabled = TryParseLiveEnabledState(removed.Item) == false ||
                                     IsRestrictedOrRollbackRawState(removed.Item.Category, removed.Item.RawState);
@@ -1072,7 +1098,9 @@ public sealed unsafe partial class SystemStateSnapshotDiffer
     private void CollectDiffCandidateLocked(
         SnapshotItem live,
         List<(SnapshotItem Live, SnapshotItem? Previous)> changedList,
-        HashSet<string>? trackedKeys = null)
+        HashSet<string>? trackedKeys = null,
+        List<SnapshotItem>? transientRestored = null,
+        List<SnapshotItem>? disabledStateUpdates = null)
     {
         if (trackedKeys != null && trackedKeys.Contains(live.LocationKey))
             return;
@@ -1088,6 +1116,10 @@ public sealed unsafe partial class SystemStateSnapshotDiffer
             if (TryGetBaselineSuppressionReason(live, DateTime.UtcNow, out string reason))
             {
                 _cachedSnapshot[live.LocationKey] = live;
+                if (reason == "transient" && live.Category == MonitorCategory.StartupItem)
+                {
+                    transientRestored?.Add(live);
+                }
                 if (StartupGuard.Core.Configuration.UserSettingsStore.GetDiagnosticLoggingEnabled())
                 {
                     SharedStorageHelper.LogDiagnostic("BaselineSuppress",
@@ -1101,6 +1133,15 @@ public sealed unsafe partial class SystemStateSnapshotDiffer
         }
         else if (!string.Equals(existing.RawState, live.RawState, StringComparison.OrdinalIgnoreCase))
         {
+            if (live.Category is MonitorCategory.StartupItem or MonitorCategory.ScheduledTask &&
+                TryParseLiveEnabledState(live) == false)
+            {
+                // 用户通过任务管理器/系统工具手动禁用了启动项或计划任务：静默同步禁用态到快照与基线，绝不误弹窗
+                _cachedSnapshot[live.LocationKey] = live;
+                disabledStateUpdates?.Add(live);
+                return;
+            }
+
             // 若前后均处于同路径已启用状态（仅 Scene/描述文本等元数据差异），静默吸收至基线，不重复触发拦截弹窗
             bool sameCommand = string.Equals(existing.CommandOrBinaryPath, live.CommandOrBinaryPath, StringComparison.OrdinalIgnoreCase);
             bool bothEnabled = sameCommand && TryParseLiveEnabledState(existing) == true && TryParseLiveEnabledState(live) == true;
@@ -1110,6 +1151,36 @@ public sealed unsafe partial class SystemStateSnapshotDiffer
                 trackedKeys?.Add(live.LocationKey);
             }
         }
+    }
+
+    internal static bool TryExtractUserSidFromLocationKey(string? locationKey, out string sid, out bool requiresClassesHive)
+    {
+        sid = string.Empty;
+        requiresClassesHive = false;
+        if (string.IsNullOrWhiteSpace(locationKey))
+            return false;
+
+        string rest;
+        if (locationKey.StartsWith(@"HKU\", StringComparison.OrdinalIgnoreCase))
+            rest = locationKey[4..];
+        else if (locationKey.StartsWith(@"HKEY_USERS\", StringComparison.OrdinalIgnoreCase))
+            rest = locationKey[11..];
+        else
+            return false;
+
+        int slash = rest.IndexOf('\\');
+        if (slash <= 0)
+            return false;
+
+        string candidateSid = rest[..slash];
+        if (!candidateSid.StartsWith("S-1-", StringComparison.OrdinalIgnoreCase) ||
+            candidateSid.EndsWith("_Classes", StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        sid = candidateSid;
+        requiresClassesHive = locationKey.Contains(@"\Software\Classes\", StringComparison.OrdinalIgnoreCase) ||
+                              locationKey.Contains(@"\AppModel\SystemAppData\", StringComparison.OrdinalIgnoreCase);
+        return true;
     }
 
     /// <summary>
@@ -1132,15 +1203,18 @@ public sealed unsafe partial class SystemStateSnapshotDiffer
     {
         List<(SnapshotItem Live, SnapshotItem? Previous)> changedList;
         var evictedBaselineKeys = new List<string>();
+        var upsertedBaselineRecords = new List<KnownBaselineRecord>();
         lock (_diffSyncLock)
         {
             EnsureAllActiveUsersHydratedLocked(activeUserSid, contextMenuEngine);
             var (liveItems, coveredCategories) = ScanSingleTargetCategory(target, activeUserSid, contextMenuEngine);
             changedList = new List<(SnapshotItem Live, SnapshotItem? Previous)>();
+            var transientRestored = new List<SnapshotItem>();
+            var disabledStateUpdates = new List<SnapshotItem>();
 
             foreach (var live in liveItems)
             {
-                CollectDiffCandidateLocked(live, changedList);
+                CollectDiffCandidateLocked(live, changedList, transientRestored: transientRestored, disabledStateUpdates: disabledStateUpdates);
             }
 
             // 仅当确实发现新建/状态变更项时，才对右键菜单多场景或空路径做一次 120ms 稳态二次确认，零变更事件零额外休眠
@@ -1177,7 +1251,7 @@ public sealed unsafe partial class SystemStateSnapshotDiffer
                 // 合并等待期间同期新落盘的同批变更项，防止多场景写入分步到达时漏检
                 foreach (var live in liveItems)
                 {
-                    CollectDiffCandidateLocked(live, changedList, trackedKeys);
+                    CollectDiffCandidateLocked(live, changedList, trackedKeys, transientRestored, disabledStateUpdates);
                 }
             }
 
@@ -1187,8 +1261,8 @@ public sealed unsafe partial class SystemStateSnapshotDiffer
                 _cachedSnapshot[live.LocationKey] = live;
             }
 
-            // 同步清理已消失项目；仅当 StartupItem 物理文件仍存在时登记 10s 瞬态删建保护（如 OneDrive 自检），
-            // 其余项目或物理文件已移除则立即驱逐持久化基线与扫描缓存，确保卸载重装必重新拦截。
+            // 同步清理已消失项目；用户注销导致 Hive 卸载时仅清除内存状态而保留持久基线；
+            // 真实删除/卸载则立即驱逐持久基线与扫描缓存，StartupItem 仅在非 UWP 且文件仍在磁盘时写入 5s 瞬态保护。
             var liveKeys = new HashSet<string>(liveItems.Select(x => x.LocationKey), StringComparer.OrdinalIgnoreCase);
             var coveredSet = new HashSet<MonitorCategory>(coveredCategories);
             var removedKeys = _cachedSnapshot
@@ -1197,11 +1271,23 @@ public sealed unsafe partial class SystemStateSnapshotDiffer
                 .Where(k => !liveKeys.Contains(k))
                 .ToList();
 
+            var loadedSids = new HashSet<string>(InteractiveUserHiveResolver.GetAllLoadedUserSids(), StringComparer.OrdinalIgnoreCase);
+            if (!string.IsNullOrWhiteSpace(activeUserSid))
+                loadedSids.Add(activeUserSid);
+
             var nowUtc = DateTime.UtcNow;
             foreach (var remKey in removedKeys)
             {
                 if (_cachedSnapshot.TryRemove(remKey, out var remItem))
                 {
+                    if (TryExtractUserSidFromLocationKey(remKey, out string remSid, out bool requiresClassesHive) &&
+                        (!loadedSids.Contains(remSid) || (requiresClassesHive && !IsUserClassesHiveMounted(remSid))))
+                    {
+                        _hydratedUserSids.TryRemove(remSid, out _);
+                        _hydratedUserClassesSids.TryRemove(remSid, out _);
+                        continue;
+                    }
+
                     if (remItem.Category is MonitorCategory.Win32Service or MonitorCategory.KernelDriver)
                     {
                         string svcName = PrivilegedRollbackEngine.ExtractLeafKeyName(remKey);
@@ -1213,20 +1299,21 @@ public sealed unsafe partial class SystemStateSnapshotDiffer
                     }
                     else if (remItem.Category == MonitorCategory.StartupItem)
                     {
-                        string phys = ShellNavigationHelper.ResolvePhysicalFilePath(remItem.CommandOrBinaryPath);
-                        bool uninstalledMissingFile = !string.IsNullOrWhiteSpace(phys) &&
-                                                      Path.IsPathRooted(phys) &&
-                                                      !phys.Contains(@"\System32\", StringComparison.OrdinalIgnoreCase) &&
-                                                      !phys.Contains(@"\SysWOW64\", StringComparison.OrdinalIgnoreCase) &&
-                                                      !File.Exists(phys);
-                        if (uninstalledMissingFile)
+                        RemovePersistedBaseline(remKey);
+                        evictedBaselineKeys.Add(remKey);
+
+                        if (!PrivilegedRollbackEngine.IsUwpStartupLocation(remKey))
                         {
-                            RemovePersistedBaseline(remKey);
-                            evictedBaselineKeys.Add(remKey);
-                        }
-                        else
-                        {
-                            _recentlyRemovedItems[remKey] = (remItem, nowUtc);
+                            string phys = ShellNavigationHelper.ResolvePhysicalFilePath(remItem.CommandOrBinaryPath);
+                            bool uninstalledMissingFile = !string.IsNullOrWhiteSpace(phys) &&
+                                                          Path.IsPathRooted(phys) &&
+                                                          !phys.Contains(@"\System32\", StringComparison.OrdinalIgnoreCase) &&
+                                                          !phys.Contains(@"\SysWOW64\", StringComparison.OrdinalIgnoreCase) &&
+                                                          !File.Exists(phys);
+                            if (!uninstalledMissingFile)
+                            {
+                                _recentlyRemovedItems[remKey] = (remItem, nowUtc);
+                            }
                         }
                     }
                     else if (!HasToggleSiblingInSnapshot(remKey))
@@ -1237,12 +1324,23 @@ public sealed unsafe partial class SystemStateSnapshotDiffer
                 }
             }
 
+            if (transientRestored.Count > 0 || disabledStateUpdates.Count > 0)
+            {
+                var itemsToUpsert = transientRestored
+                    .Concat(disabledStateUpdates)
+                    .DistinctBy(x => x.LocationKey, StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+                var upsertedSet = new HashSet<string>(itemsToUpsert.Select(x => x.LocationKey), StringComparer.OrdinalIgnoreCase);
+                evictedBaselineKeys.RemoveAll(k => upsertedSet.Contains(k));
+                upsertedBaselineRecords.AddRange(ExportCurrentSnapshotAsBaselines(itemsToUpsert));
+            }
+
             // 惰性清理过期的瞬态移除记录
             if (_recentlyRemovedItems.Count > 64)
             {
                 foreach (var kv in _recentlyRemovedItems)
                 {
-                    if ((nowUtc - kv.Value.RemovedUtc).TotalSeconds > 30.0)
+                    if ((nowUtc - kv.Value.RemovedUtc).TotalSeconds > 15.0)
                         _recentlyRemovedItems.TryRemove(kv.Key, out _);
                 }
             }
@@ -1253,6 +1351,17 @@ public sealed unsafe partial class SystemStateSnapshotDiffer
             try
             {
                 OnPersistedBaselinesEvicted?.Invoke(evictedBaselineKeys);
+            }
+            catch
+            {
+            }
+        }
+
+        if (upsertedBaselineRecords.Count > 0)
+        {
+            try
+            {
+                OnPersistedBaselinesUpserted?.Invoke(upsertedBaselineRecords);
             }
             catch
             {
@@ -1534,10 +1643,12 @@ public sealed unsafe partial class SystemStateSnapshotDiffer
         nint hklm = PrivilegedRollbackEngine.HKEY_LOCAL_MACHINE;
         nint hku = PrivilegedRollbackEngine.HKEY_USERS;
 
-        // HKLM Run & RunOnce
-        ReadRegistryValuesToSnapshot(hklm, @"SOFTWARE\Microsoft\Windows\CurrentVersion\Run", MonitorCategory.StartupItem, list);
+        // HKLM Run & RunOnce (合并 StartupApproved 真实禁用状态)
+        var hklmRunDisabled = ReadStartupApprovedDisabledSet(hklm, @"SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run");
+        var hklmRun32Disabled = ReadStartupApprovedDisabledSet(hklm, @"SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run32");
+        ReadRegistryValuesToSnapshot(hklm, @"SOFTWARE\Microsoft\Windows\CurrentVersion\Run", MonitorCategory.StartupItem, list, hklmRunDisabled);
         ReadRegistryValuesToSnapshot(hklm, @"SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce", MonitorCategory.StartupItem, list);
-        ReadRegistryValuesToSnapshot(hklm, @"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Run", MonitorCategory.StartupItem, list);
+        ReadRegistryValuesToSnapshot(hklm, @"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Run", MonitorCategory.StartupItem, list, hklmRun32Disabled);
 
         // HKEY_USERS\<SID> Run & RunOnce (动态支持系统中所有活跃用户)
         var sids = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -1548,18 +1659,24 @@ public sealed unsafe partial class SystemStateSnapshotDiffer
 
         foreach (var sid in sids)
         {
-            ReadRegistryValuesToSnapshot(hku, $@"{sid}\Software\Microsoft\Windows\CurrentVersion\Run", MonitorCategory.StartupItem, list);
+            var userRunDisabled = ReadStartupApprovedDisabledSet(hku, $@"{sid}\Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run");
+            var userRun32Disabled = ReadStartupApprovedDisabledSet(hku, $@"{sid}\Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run32");
+            ReadRegistryValuesToSnapshot(hku, $@"{sid}\Software\Microsoft\Windows\CurrentVersion\Run", MonitorCategory.StartupItem, list, userRunDisabled);
             ReadRegistryValuesToSnapshot(hku, $@"{sid}\Software\Microsoft\Windows\CurrentVersion\RunOnce", MonitorCategory.StartupItem, list);
-            ReadRegistryValuesToSnapshot(hku, $@"{sid}\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Run", MonitorCategory.StartupItem, list);
+            ReadRegistryValuesToSnapshot(hku, $@"{sid}\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Run", MonitorCategory.StartupItem, list, userRun32Disabled);
             ReadRegistryValuesToSnapshot(hku, $@"{sid}\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\RunOnce", MonitorCategory.StartupItem, list);
         }
 
         // 物理启动文件夹
         string commonStartup = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), @"Microsoft\Windows\Start Menu\Programs\Startup");
-        ScanStartupFolder(commonStartup, list);
+        var commonFolderDisabled = ReadStartupApprovedDisabledSet(hklm, @"SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\StartupFolder");
+        ScanStartupFolder(commonStartup, list, commonFolderDisabled);
 
         string userStartup = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), @"Microsoft\Windows\Start Menu\Programs\Startup");
-        ScanStartupFolder(userStartup, list);
+        var userFolderDisabled = !string.IsNullOrEmpty(activeUserSid)
+            ? ReadStartupApprovedDisabledSet(hku, $@"{activeUserSid}\Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\StartupFolder")
+            : null;
+        ScanStartupFolder(userStartup, list, userFolderDisabled);
 
         // UWP / Microsoft Store 应用自启任务 (AppModel\SystemAppData)
         foreach (var uwp in UwpStartupScanner.ScanForUserSids(sids))
@@ -1579,7 +1696,7 @@ public sealed unsafe partial class SystemStateSnapshotDiffer
         return list;
     }
 
-    private static void ScanStartupFolder(string folderPath, List<SnapshotItem> list)
+    private static void ScanStartupFolder(string folderPath, List<SnapshotItem> list, HashSet<string>? disabledFiles = null)
     {
         if (!Directory.Exists(folderPath))
             return;
@@ -1588,11 +1705,16 @@ public sealed unsafe partial class SystemStateSnapshotDiffer
         {
             foreach (var file in Directory.EnumerateFiles(folderPath))
             {
+                string fileName = Path.GetFileName(file);
+                if (fileName.Equals("desktop.ini", StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                bool isEnabled = disabledFiles == null || !disabledFiles.Contains(fileName);
                 list.Add(new SnapshotItem(
                     MonitorCategory.StartupItem,
                     file,
                     file,
-                    $"File: {Path.GetFileName(file)}"));
+                    $"File: {fileName}, Enabled={isEnabled}"));
             }
         }
         catch
@@ -1741,17 +1863,19 @@ public sealed unsafe partial class SystemStateSnapshotDiffer
 
                     string relName = Path.GetRelativePath(tasksDir, file);
                     string cmd = file;
-                    if (PrivilegedRollbackEngine.TryParseScheduledTaskXml(file, isXmlContent: false, out string parsedCmd, out _, out _ ) &&
-                        !string.IsNullOrWhiteSpace(parsedCmd))
+                    bool taskEnabled = true;
+                    if (PrivilegedRollbackEngine.TryParseScheduledTaskXml(file, isXmlContent: false, out string parsedCmd, out _, out bool parsedEnabled))
                     {
-                        cmd = parsedCmd;
+                        if (!string.IsNullOrWhiteSpace(parsedCmd))
+                            cmd = parsedCmd;
+                        taskEnabled = parsedEnabled;
                     }
 
                     var item = new SnapshotItem(
                         MonitorCategory.ScheduledTask,
                         $@"Task: \{relName}",
                         cmd,
-                        $"TaskFile: {relName}",
+                        $"TaskFile: {relName}, Enabled={taskEnabled}",
                         DisplayName: Path.GetFileName(file));
                     if (ticks > 0)
                         _taskFileCache[file] = (ticks, length, item);
@@ -1921,11 +2045,51 @@ public sealed unsafe partial class SystemStateSnapshotDiffer
         return list;
     }
 
+    private static HashSet<string>? ReadStartupApprovedDisabledSet(nint rootHive, string approvedSubKey)
+    {
+        int errOpen = RegOpenKeyExW(rootHive, approvedSubKey, 0, KEY_READ | KEY_WOW64_64KEY, out nint hKey);
+        if (errOpen != 0 || hKey == 0)
+        {
+            errOpen = RegOpenKeyExW(rootHive, approvedSubKey, 0, KEY_READ, out hKey);
+            if (errOpen != 0 || hKey == 0)
+                return null;
+        }
+
+        HashSet<string>? disabled = null;
+        try
+        {
+            char* valNameBuf = stackalloc char[260];
+            byte* dataBuf = stackalloc byte[64];
+            uint index = 0;
+
+            while (true)
+            {
+                uint cchValName = 260;
+                uint cbData = 64;
+                int err = RegEnumValueW(hKey, index++, valNameBuf, ref cchValName, 0, out uint valType, dataBuf, ref cbData);
+                if (err != 0) break;
+
+                if (valType == 3 && cbData > 0 && (dataBuf[0] & 0x01) != 0)
+                {
+                    disabled ??= new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                    disabled.Add(new string(valNameBuf, 0, (int)cchValName));
+                }
+            }
+        }
+        finally
+        {
+            RegCloseKey(hKey);
+        }
+
+        return disabled;
+    }
+
     private static void ReadRegistryValuesToSnapshot(
         nint rootHive,
         string subKeyPath,
         MonitorCategory category,
-        List<SnapshotItem> list)
+        List<SnapshotItem> list,
+        HashSet<string>? disabledValues = null)
     {
         int errOpen = RegOpenKeyExW(rootHive, subKeyPath, 0, KEY_READ | KEY_WOW64_64KEY, out nint hKey);
         if (errOpen != 0 || hKey == 0)
@@ -1958,12 +2122,15 @@ public sealed unsafe partial class SystemStateSnapshotDiffer
 
                 string prefix = rootHive == PrivilegedRollbackEngine.HKEY_USERS ? "HKU" : "HKLM";
                 string locationKey = $@"{prefix}\{subKeyPath}\{valName}";
+                string rawState = category == MonitorCategory.StartupItem
+                    ? $"ValName={valName}, Data={strVal}, Type={valType}, Enabled={disabledValues == null || !disabledValues.Contains(valName)}"
+                    : $"ValName={valName}, Data={strVal}, Type={valType}";
 
                 list.Add(new SnapshotItem(
                     category,
                     locationKey,
                     strVal,
-                    $"ValName={valName}, Data={strVal}, Type={valType}",
+                    rawState,
                     valType,
                     rawBytes));
             }

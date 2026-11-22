@@ -273,6 +273,17 @@ public static class Program
                 catch { }
             });
         };
+        _differ.OnPersistedBaselinesUpserted = upsertedRecords =>
+        {
+            if (upsertedRecords == null || upsertedRecords.Count == 0)
+                return;
+            var snapshotRecords = upsertedRecords.ToArray();
+            _ = Task.Run(() =>
+            {
+                try { _sqliteRepo.UpsertKnownBaselinesBatch(snapshotRecords); }
+                catch { }
+            });
+        };
 
         // 3. 解析当前交互式桌面用户的 SID (跨会话定向 HKEY_USERS\<SID>)
         (_, _activeInteractiveUserSid) = InteractiveUserHiveResolver.TryGetActiveInteractiveUserSid();
@@ -443,11 +454,12 @@ public static class Program
             return;
         }
 
-        // 若目标状态已经处于明确禁用/屏蔽状态（如右键菜单 Enabled=False 或 UWP 已禁用），严禁再次触发回滚/通知循环
-        if ((capturedFeature.Category is MonitorCategory.ClassicContextMenu or MonitorCategory.ModernContextMenu &&
-             capturedFeature.NewStateSummary.Contains("Enabled=False", StringComparison.OrdinalIgnoreCase)) ||
-            (PrivilegedRollbackEngine.IsUwpStartupLocation(capturedFeature.LocationKeyOrIdentifier) &&
-             capturedFeature.NewStateSummary.Contains("Enabled=False", StringComparison.OrdinalIgnoreCase)))
+        // 若目标状态已经处于明确禁用/屏蔽状态（如右键菜单/启动项/计划任务 Enabled=False），严禁再次触发回滚/通知循环
+        if (capturedFeature.Category is MonitorCategory.StartupItem
+                or MonitorCategory.ScheduledTask
+                or MonitorCategory.ClassicContextMenu
+                or MonitorCategory.ModernContextMenu &&
+            capturedFeature.NewStateSummary.Contains("Enabled=False", StringComparison.OrdinalIgnoreCase))
         {
             SharedStorageHelper.LogDiagnostic("Service", $"Skip already-disabled state mutation: {capturedFeature.LocationKeyOrIdentifier}");
             return;
@@ -1301,30 +1313,47 @@ public static class Program
         }
     }
 
+    private static readonly PipeSecurity? SharedPipeSecurity = CreateSharedPipeSecurity();
+
+    private static PipeSecurity? CreateSharedPipeSecurity()
+    {
+        if (!OperatingSystem.IsWindows())
+            return null;
+
+        try
+        {
+            var pipeSecurity = new PipeSecurity();
+            pipeSecurity.AddAccessRule(new PipeAccessRule(
+                new SecurityIdentifier(WellKnownSidType.WorldSid, null),
+                PipeAccessRights.ReadWrite,
+                AccessControlType.Allow));
+            pipeSecurity.AddAccessRule(new PipeAccessRule(
+                new SecurityIdentifier(WellKnownSidType.AuthenticatedUserSid, null),
+                PipeAccessRights.ReadWrite | PipeAccessRights.CreateNewInstance,
+                AccessControlType.Allow));
+            pipeSecurity.AddAccessRule(new PipeAccessRule(
+                new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null),
+                PipeAccessRights.FullControl,
+                AccessControlType.Allow));
+            pipeSecurity.AddAccessRule(new PipeAccessRule(
+                new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null),
+                PipeAccessRights.FullControl,
+                AccessControlType.Allow));
+            return pipeSecurity;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[StartupGuard.Service] PipeSecurity init warning: {ex.Message}; fallback to standard pipe.");
+            return null;
+        }
+    }
+
     private static NamedPipeServerStream CreateNamedPipeServer()
     {
-        if (OperatingSystem.IsWindows())
+        if (OperatingSystem.IsWindows() && SharedPipeSecurity != null)
         {
             try
             {
-                var pipeSecurity = new PipeSecurity();
-                pipeSecurity.AddAccessRule(new PipeAccessRule(
-                    new SecurityIdentifier(WellKnownSidType.WorldSid, null),
-                    PipeAccessRights.ReadWrite,
-                    AccessControlType.Allow));
-                pipeSecurity.AddAccessRule(new PipeAccessRule(
-                    new SecurityIdentifier(WellKnownSidType.AuthenticatedUserSid, null),
-                    PipeAccessRights.ReadWrite | PipeAccessRights.CreateNewInstance,
-                    AccessControlType.Allow));
-                pipeSecurity.AddAccessRule(new PipeAccessRule(
-                    new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null),
-                    PipeAccessRights.FullControl,
-                    AccessControlType.Allow));
-                pipeSecurity.AddAccessRule(new PipeAccessRule(
-                    new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null),
-                    PipeAccessRights.FullControl,
-                    AccessControlType.Allow));
-
                 return NamedPipeServerStreamAcl.Create(
                     PipeName,
                     PipeDirection.InOut,
@@ -1333,7 +1362,7 @@ public static class Program
                     PipeOptions.Asynchronous,
                     inBufferSize: 65536,
                     outBufferSize: 65536,
-                    pipeSecurity: pipeSecurity);
+                    pipeSecurity: SharedPipeSecurity);
             }
             catch (Exception ex)
             {
@@ -1731,6 +1760,24 @@ public static class Program
         }
     }
 
+    private static void PurgeExpiredRuntimeCaches()
+    {
+        var nowUtc = DateTime.UtcNow;
+        foreach (var kv in _recentlyEvaluated)
+        {
+            if ((nowUtc - kv.Value).TotalSeconds > 60.0)
+                _recentlyEvaluated.TryRemove(kv.Key, out _);
+        }
+
+        foreach (var kv in _recentUserDecisionEnforcement)
+        {
+            if (nowUtc >= kv.Value.Expiry)
+                _recentUserDecisionEnforcement.TryRemove(kv.Key, out _);
+        }
+
+        _differ?.PurgeExpiredTransientCaches();
+    }
+
     private static async Task StartPeriodicMd5ValidationLoopAsync(CancellationToken ct)
     {
         // 服务启动后 10 秒执行首次单版本失效巡检，之后按周期巡检
@@ -1784,7 +1831,8 @@ public static class Program
                     startupChecked = true;
                 }
 
-                // 轻度回收常驻内存物理页（不触发全量阻塞 GC）
+                // 周期性清理过期瞬态缓存与轻度回收常驻内存物理页（不触发全量阻塞 GC）
+                PurgeExpiredRuntimeCaches();
                 ProcessQoSAndMemoryManager.TrimWorkingSetLight();
 
                 // 周期性休眠 5 分钟后再次评估
