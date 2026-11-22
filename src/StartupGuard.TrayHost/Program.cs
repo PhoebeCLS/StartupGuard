@@ -116,6 +116,10 @@ internal sealed class TrayApplicationContext : ApplicationContext
     private readonly bool _enableSound = false;
     private readonly bool _autoGameMode = true;
     private volatile string _lastSentTogglesSignature = string.Empty;
+    private string _cachedUserSid = string.Empty;
+    private DateTime _lastGameCheckUtc = DateTime.MinValue;
+    private bool _cachedInGame;
+    private DateTime _lastTogglesCheckUtc = DateTime.MinValue;
 
     private readonly ToolStripMenuItem _itemStartup;
     private readonly ToolStripMenuItem _itemService;
@@ -126,6 +130,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
     private readonly ToolStripMenuItem _itemExit;
 
     private readonly System.Collections.Concurrent.ConcurrentQueue<(string Title, string Message, ToolTipIcon Icon, bool PlayErrorSound)> _balloonQueue = new();
+    private readonly SemaphoreSlim _balloonSignal = new(0);
     private readonly GameModeDebounceController _gameModeController;
     private readonly SynchronizationContext? _syncContext;
     private InterceptionDiffDialogWindow? _currentDialog;
@@ -381,18 +386,29 @@ internal sealed class TrayApplicationContext : ApplicationContext
 
         while (!ct.IsCancellationRequested)
         {
+            bool receivedPayload = false;
             try
             {
                 await using var pipeClient = new NamedPipeClientStream(".", PipeName, PipeDirection.InOut, PipeOptions.Asynchronous);
                 await pipeClient.ConnectAsync(1000, ct);
 
-                // 发送用户态会话状态上报 (含全屏 3D 游戏检测与用户 SID) 并拉取待审核弹窗
-                bool inGame = _autoGameMode && Program.CheckIsD3DFullScreenGame();
-                string userSid = Program.GetCurrentUserSid() ?? string.Empty;
+                var nowUtc = DateTime.UtcNow;
+                if (string.IsNullOrEmpty(_cachedUserSid))
+                {
+                    _cachedUserSid = Program.GetCurrentUserSid() ?? string.Empty;
+                }
+
+                if (_autoGameMode && (nowUtc - _lastGameCheckUtc).TotalSeconds >= 3.0)
+                {
+                    _cachedInGame = Program.CheckIsD3DFullScreenGame();
+                    _lastGameCheckUtc = nowUtc;
+                }
+
+                // 发送用户态会话状态上报 (含节流后的 3D 全屏检测与缓存用户 SID) 并拉取待审核弹窗
                 var report = new UserSessionReportPayload
                 {
-                    InGame = inGame,
-                    UserSid = userSid
+                    InGame = _autoGameMode && _cachedInGame,
+                    UserSid = _cachedUserSid
                 };
                 byte[] reportBytes = BinaryPipeSerializer.SerializeUserSessionReport(report);
                 var pingHdr = PipeMessageHeader.Create(PipeMessageType.UserSessionReport, (uint)reportBytes.Length, 0);
@@ -401,11 +417,16 @@ internal sealed class TrayApplicationContext : ApplicationContext
                 await pipeClient.WriteAsync(reportBytes, ct);
                 await pipeClient.FlushAsync(ct);
 
-                // 仅在首次建立连接或策略/开关发生变化时推送至服务端，避免每 300ms 轮询重复发送并刷屏日志
-                string currentSig = BuildTogglesSignature(BuildCurrentTogglesPayload());
-                if (!string.Equals(currentSig, _lastSentTogglesSignature, StringComparison.Ordinal))
+                // 仅在首次建立连接或每 15 秒检查一次策略/开关变化，避免高频轮询重复读注册表
+                if (string.IsNullOrEmpty(_lastSentTogglesSignature) ||
+                    (nowUtc - _lastTogglesCheckUtc).TotalSeconds >= 15.0)
                 {
-                    SendTogglesUpdate();
+                    _lastTogglesCheckUtc = nowUtc;
+                    string currentSig = BuildTogglesSignature(BuildCurrentTogglesPayload());
+                    if (!string.Equals(currentSig, _lastSentTogglesSignature, StringComparison.Ordinal))
+                    {
+                        SendTogglesUpdate();
+                    }
                 }
 
                 int read = await pipeClient.ReadAsync(hdrBuf.AsMemory(0, 64), ct);
@@ -414,6 +435,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
                     var respHdr = BinaryPipeSerializer.ReadHeader(hdrBuf);
                     if (respHdr.IsValid && respHdr.PayloadLength > 0 && respHdr.PayloadLength <= 65536)
                     {
+                        receivedPayload = true;
                         byte[] payload = new byte[respHdr.PayloadLength];
                         await pipeClient.ReadExactlyAsync(payload, ct);
 
@@ -426,6 +448,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
                         {
                             string msg = System.Text.Encoding.UTF8.GetString(payload);
                             _balloonQueue.Enqueue(("StartupGuard 执行异常提醒", msg, ToolTipIcon.Error, PlayErrorSound: true));
+                            try { _balloonSignal.Release(); } catch (ObjectDisposedException) { }
                         }
                         else if (respHdr.MessageType == PipeMessageType.BlockedItemNotification)
                         {
@@ -443,6 +466,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
                             if (allowed && !string.IsNullOrWhiteSpace(cleanMsg))
                             {
                                 _balloonQueue.Enqueue(("StartupGuard 已拦截", cleanMsg, ToolTipIcon.Info, PlayErrorSound: false));
+                                try { _balloonSignal.Release(); } catch (ObjectDisposedException) { }
                             }
                         }
                         else if (respHdr.MessageType == PipeMessageType.GameModeBatchAuditNotify)
@@ -459,12 +483,14 @@ internal sealed class TrayApplicationContext : ApplicationContext
             }
             catch
             {
-                // 服务未启动或断开，重置已发送状态签名并等待 500ms 重连
+                // 服务未启动或断开，重置已发送状态签名并等待 1000ms 重连
                 _lastSentTogglesSignature = string.Empty;
-                await Task.Delay(500, ct);
+                await Task.Delay(1000, ct);
+                continue;
             }
 
-            await Task.Delay(300, ct);
+            // 有待取消息时 50ms 连续拉取；空闲时降频至 1000ms 降低 CPU 与管道开销
+            await Task.Delay(receivedPayload ? 50 : 1000, ct);
         }
     }
 
@@ -510,7 +536,6 @@ internal sealed class TrayApplicationContext : ApplicationContext
             _currentDialog.Closed += (_, _) =>
             {
                 _currentDialog = null;
-                GC.Collect(2, GCCollectionMode.Optimized);
                 ProcessQoSAndMemoryManager.TrimWorkingSetMemory();
             };
 
@@ -542,7 +567,6 @@ internal sealed class TrayApplicationContext : ApplicationContext
                     _currentDialog.Closed += (_, _) =>
                     {
                         _currentDialog = null;
-                        GC.Collect(2, GCCollectionMode.Optimized);
                         ProcessQoSAndMemoryManager.TrimWorkingSetMemory();
                     };
                     _currentDialog.Topmost = true;
@@ -697,6 +721,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
         {
             try
             {
+                await _balloonSignal.WaitAsync(ct);
                 if (_balloonQueue.TryDequeue(out var item))
                 {
                     _syncContext?.Post(_ =>
@@ -715,12 +740,12 @@ internal sealed class TrayApplicationContext : ApplicationContext
                     // 安装大量软件时延迟按序弹出通知，防止瞬间堆叠覆盖丢失
                     await Task.Delay(2200, ct);
                 }
-                else
-                {
-                    await Task.Delay(250, ct);
-                }
             }
             catch (OperationCanceledException)
+            {
+                break;
+            }
+            catch (ObjectDisposedException)
             {
                 break;
             }
@@ -751,6 +776,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
         _notifyIcon.Visible = false;
         _notifyIcon.Dispose();
         _contextMenu.Dispose();
+        try { _balloonSignal.Dispose(); } catch { }
 
         // 用户在托盘点击“退出”时，完整关闭后台监控服务及相关子进程
         try

@@ -99,6 +99,8 @@ public sealed unsafe partial class ContextMenuManagerEngine
 {
     private const string AdvApi32Dll = "advapi32.dll";
     private const string BlockedExtensionsSubKey = @"SOFTWARE\Microsoft\Windows\CurrentVersion\Shell Extensions\Blocked";
+    private static readonly ConcurrentDictionary<string, (DateTime LastWriteUtc, ContextMenuItemEntry[] Templates)> _modernManifestCache =
+        new(StringComparer.OrdinalIgnoreCase);
 
     [LibraryImport(AdvApi32Dll, EntryPoint = "RegOpenKeyExW", StringMarshalling = StringMarshalling.Utf16)]
     private static partial int RegOpenKeyExW(nint hKey, string lpSubKey, uint ulOptions, uint samDesired, out nint phkResult);
@@ -996,6 +998,18 @@ public sealed unsafe partial class ContextMenuManagerEngine
     }
 
     /// <summary>
+    /// 仅扫描传统右键菜单 (经典 Shell/ShellEx + 打开方式 + 特殊菜单)，避免触发传统菜单监控时反复全量枚举 Win11 PackageManager
+    /// </summary>
+    public List<ContextMenuItemEntry> ScanClassicOnlyContextMenus(string? activeUserSid)
+    {
+        var combined = new List<ContextMenuItemEntry>();
+        combined.AddRange(ScanClassicContextMenus(activeUserSid));
+        combined.AddRange(ScanOpenWithApplications(activeUserSid));
+        combined.AddRange(ScanSpecialContextMenus(activeUserSid));
+        return DeduplicateByLastWriteTime(combined);
+    }
+
+    /// <summary>
     /// 扫描 Approved 注册表中的外壳扩展组件 (用于菜单分析与残存组件深度研判)
     /// </summary>
     public List<ContextMenuItemEntry> ScanApprovedShellExtensions(string? activeUserSid = null)
@@ -1177,52 +1191,101 @@ public sealed unsafe partial class ContextMenuManagerEngine
                     manifestPath = bundleManifest;
                 }
 
-                string manifestXml;
+                DateTime manifestWriteUtc;
                 try
                 {
-                    manifestXml = File.ReadAllText(manifestPath);
+                    manifestWriteUtc = File.GetLastWriteTimeUtc(manifestPath);
                 }
                 catch
                 {
                     continue;
                 }
 
-                if (!manifestXml.Contains("windows.fileExplorerContextMenus", StringComparison.OrdinalIgnoreCase))
-                    continue;
-
-                try { packageDisplayName = package.DisplayName ?? string.Empty; } catch { }
-                try { publisherDisplayName = package.PublisherDisplayName ?? string.Empty; } catch { }
-
-                var parsed = ParseAppxManifestModernMenus(
-                    manifestXml,
-                    packageFullName,
-                    packageName,
-                    packageDisplayName,
-                    publisherDisplayName,
-                    installPath);
-
-                foreach (var entry in parsed)
+                ContextMenuItemEntry[] templates;
+                if (_modernManifestCache.TryGetValue(packageFullName, out var cachedPkg) &&
+                    cachedPkg.LastWriteUtc == manifestWriteUtc)
                 {
-                    if (!seenClsids.Add(entry.Clsid))
-                        continue;
-
-                    if (string.IsNullOrWhiteSpace(entry.TargetBinaryOrCommand))
+                    templates = cachedPkg.Templates;
+                }
+                else
+                {
+                    string manifestXml;
+                    try
                     {
-                        string regDll = ResolvePackagedComServerBinary(PrivilegedRollbackEngine.HKEY_LOCAL_MACHINE, packageFullName, entry.Clsid);
-                        if (string.IsNullOrWhiteSpace(regDll) && !string.IsNullOrWhiteSpace(activeUserSid))
-                        {
-                            string userClassKey = InteractiveUserHiveResolver.ResolveUserRegistryPath(
-                                activeUserSid,
-                                $@"Software\Classes\PackagedCom\Package\{packageFullName}\Class\{entry.Clsid}");
-                            regDll = ReadRegistryStringValue(PrivilegedRollbackEngine.HKEY_USERS, userClassKey, "DllPath");
-                        }
-                        if (!string.IsNullOrWhiteSpace(regDll))
-                            entry.TargetBinaryOrCommand = regDll;
+                        manifestXml = File.ReadAllText(manifestPath);
+                    }
+                    catch
+                    {
+                        continue;
                     }
 
-                    entry.RegistryPath = ResolvePackagedComClassIndexRegistryPath(entry.Clsid, packageFullName, activeUserSid);
-                    entry.IsEnabled = !blockedClsids.Contains(entry.Clsid);
-                    results.Add(entry);
+                    if (!manifestXml.Contains("windows.fileExplorerContextMenus", StringComparison.OrdinalIgnoreCase))
+                    {
+                        _modernManifestCache[packageFullName] = (manifestWriteUtc, Array.Empty<ContextMenuItemEntry>());
+                        continue;
+                    }
+
+                    try { packageDisplayName = package.DisplayName ?? string.Empty; } catch { }
+                    try { publisherDisplayName = package.PublisherDisplayName ?? string.Empty; } catch { }
+
+                    var parsed = ParseAppxManifestModernMenus(
+                        manifestXml,
+                        packageFullName,
+                        packageName,
+                        packageDisplayName,
+                        publisherDisplayName,
+                        installPath);
+
+                    foreach (var template in parsed)
+                    {
+                        if (string.IsNullOrWhiteSpace(template.TargetBinaryOrCommand))
+                        {
+                            string regDll = ResolvePackagedComServerBinary(PrivilegedRollbackEngine.HKEY_LOCAL_MACHINE, packageFullName, template.Clsid);
+                            if (string.IsNullOrWhiteSpace(regDll) && !string.IsNullOrWhiteSpace(activeUserSid))
+                            {
+                                string userClassKey = InteractiveUserHiveResolver.ResolveUserRegistryPath(
+                                    activeUserSid,
+                                    $@"Software\Classes\PackagedCom\Package\{packageFullName}\Class\{template.Clsid}");
+                                regDll = ReadRegistryStringValue(PrivilegedRollbackEngine.HKEY_USERS, userClassKey, "DllPath");
+                            }
+                            if (!string.IsNullOrWhiteSpace(regDll))
+                                template.TargetBinaryOrCommand = regDll;
+                        }
+                        template.RegistryPath = ResolvePackagedComClassIndexRegistryPath(template.Clsid, packageFullName, activeUserSid);
+                    }
+
+                    templates = [.. parsed];
+                    _modernManifestCache[packageFullName] = (manifestWriteUtc, templates);
+                }
+
+                foreach (var tpl in templates)
+                {
+                    if (!seenClsids.Add(tpl.Clsid))
+                        continue;
+
+                    results.Add(new ContextMenuItemEntry
+                    {
+                        IdKey = tpl.IdKey,
+                        DisplayTitle = tpl.DisplayTitle,
+                        MenuCategory = tpl.MenuCategory,
+                        ScopeScene = tpl.ScopeScene,
+                        RegistryPath = tpl.RegistryPath,
+                        Clsid = tpl.Clsid,
+                        PackageFullName = tpl.PackageFullName,
+                        Publisher = tpl.Publisher,
+                        TargetBinaryOrCommand = tpl.TargetBinaryOrCommand,
+                        IsEnabled = !blockedClsids.Contains(tpl.Clsid)
+                    });
+                }
+            }
+
+            // 清理已卸载 MSIX 包的清单缓存
+            if (_modernManifestCache.Count > seenPackages.Count + 16)
+            {
+                foreach (string key in _modernManifestCache.Keys)
+                {
+                    if (!seenPackages.Contains(key))
+                        _modernManifestCache.TryRemove(key, out _);
                 }
             }
         }

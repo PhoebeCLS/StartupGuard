@@ -89,16 +89,24 @@ public static unsafe partial class ProcessQoSAndMemoryManager
     }
 
     /// <summary>
-    /// 回收无用物理内存页，强制修剪进程 Working Set
+    /// 轻度修剪进程工作集物理页（不触发 Full Blocking GC，避免高频调用引起停顿）
     /// </summary>
-    public static void TrimWorkingSetMemory()
+    public static void TrimWorkingSetLight()
     {
-        GC.Collect(2, GCCollectionMode.Aggressive, blocking: true, compacting: true);
         if (!OperatingSystem.IsWindows())
             return;
 
         nint hProcess = GetCurrentProcess();
         nuint emptySize = unchecked((nuint)(-1));
         SetProcessWorkingSetSizeEx(hProcess, emptySize, emptySize, 0);
+    }
+
+    /// <summary>
+    /// 回收无用物理内存页，强制修剪进程 Working Set
+    /// </summary>
+    public static void TrimWorkingSetMemory()
+    {
+        GC.Collect(2, GCCollectionMode.Aggressive, blocking: true, compacting: true);
+        TrimWorkingSetLight();
     }
 }

@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Runtime.InteropServices;
 using StartupGuard.Core.Models;
 using StartupGuard.Core.Native;
@@ -60,17 +61,47 @@ public sealed unsafe partial class NativeSystemMonitorMatrix : IDisposable
         public AutoResetEvent? WaitEvent { get; set; }
     }
 
+    private sealed class CategoryDebounceSlot : IDisposable
+    {
+        public readonly object Gate = new();
+        public System.Threading.Timer? DebounceTimer;
+        public MonitoredRegistryTarget? LatestTarget;
+        public int InFlight;
+        public int PendingRescan;
+
+        public void Dispose()
+        {
+            lock (Gate)
+            {
+                DebounceTimer?.Dispose();
+                DebounceTimer = null;
+                LatestTarget = null;
+                PendingRescan = 0;
+            }
+        }
+    }
+
     private readonly List<Thread> _watcherThreads = [];
     private readonly List<WatchEntry> _allWatchEntries = [];
+    private readonly ConcurrentDictionary<MonitorCategory, CategoryDebounceSlot> _debounceSlots = new();
     private ManualResetEventSlim? _stopSignal;
     private ManualResetEvent? _stopWaitHandle;
     private readonly List<FileSystemWatcher> _directoryWatchers = [];
     private readonly Action<MonitoredRegistryTarget> _onRegistryMutatedCallback;
+    private readonly int _debounceWindowMs;
     private volatile int _enabledCategoriesMask = 0xFF; // 默认全开
+    private volatile bool _stopped;
+    private int _activeDispatches;
 
     public NativeSystemMonitorMatrix(Action<MonitoredRegistryTarget> onRegistryMutatedCallback)
+        : this(onRegistryMutatedCallback, 220)
+    {
+    }
+
+    internal NativeSystemMonitorMatrix(Action<MonitoredRegistryTarget> onRegistryMutatedCallback, int debounceWindowMs)
     {
         _onRegistryMutatedCallback = onRegistryMutatedCallback;
+        _debounceWindowMs = Math.Clamp(debounceWindowMs, 10, 2000);
     }
 
     public bool IsCategoryEnabled(MonitorCategory cat) => (_enabledCategoriesMask & (1 << (int)cat)) != 0;
@@ -91,6 +122,7 @@ public sealed unsafe partial class NativeSystemMonitorMatrix : IDisposable
     {
         StopAllWatchers();
 
+        _stopped = false;
         _stopSignal = new ManualResetEventSlim(false);
         _stopWaitHandle = new ManualResetEvent(false);
 
@@ -157,15 +189,7 @@ public sealed unsafe partial class NativeSystemMonitorMatrix : IDisposable
             FileSystemEventHandler onChange = (_, e) =>
             {
                 if (!IsCategoryEnabled(category)) return;
-                ProcessQoSAndMemoryManager.BoostToHighPerformanceMode();
-                try
-                {
-                    _onRegistryMutatedCallback(new MonitoredRegistryTarget(category, 0, e.FullPath, false));
-                }
-                finally
-                {
-                    ProcessQoSAndMemoryManager.EnterEcoEfficiencyMode();
-                }
+                ScheduleCoalescedDispatch(new MonitoredRegistryTarget(category, 0, e.FullPath, false));
             };
 
             watcher.Created += onChange;
@@ -276,23 +300,7 @@ public sealed unsafe partial class NativeSystemMonitorMatrix : IDisposable
 
                 if (IsCategoryEnabled(entry.Target.Category))
                 {
-                    var capturedTarget = entry.Target;
-                    ThreadPool.QueueUserWorkItem(_ =>
-                    {
-                        try
-                        {
-                            ProcessQoSAndMemoryManager.BoostToHighPerformanceMode();
-                            _onRegistryMutatedCallback(capturedTarget);
-                        }
-                        catch (Exception ex)
-                        {
-                            StartupGuard.Core.Storage.SharedStorageHelper.LogDiagnostic("MonitorMatrix", $"Callback error ({capturedTarget.SubKeyPath}): {ex.Message}");
-                        }
-                        finally
-                        {
-                            ProcessQoSAndMemoryManager.EnterEcoEfficiencyMode();
-                        }
-                    });
+                    ScheduleCoalescedDispatch(entry.Target);
                 }
             }
         }
@@ -310,6 +318,109 @@ public sealed unsafe partial class NativeSystemMonitorMatrix : IDisposable
                     try { RegCloseKey(entry.KeyHandle); } catch { }
                     entry.KeyHandle = 0;
                 }
+            }
+        }
+    }
+
+    internal void DispatchEventForTesting(MonitoredRegistryTarget target) => ScheduleCoalescedDispatch(target);
+
+    /// <summary>
+    /// 按监控分类在 220ms 窗口内合并高频连续变更，并限制同一分类同时最多执行 1 次全量 Diff，
+    /// 彻底杜绝系统或安装器连发注册表写入导致的线程池雪崩与数十万次重复扫描。
+    /// </summary>
+    private void ScheduleCoalescedDispatch(MonitoredRegistryTarget target)
+    {
+        if (_stopped || !IsCategoryEnabled(target.Category))
+            return;
+
+        var slot = _debounceSlots.GetOrAdd(target.Category, _ => new CategoryDebounceSlot());
+        lock (slot.Gate)
+        {
+            if (_stopped)
+                return;
+
+            // 若已有待处理目标包含跨类 CLSID 路径 (Shell Extensions)，优先保留避免被普通子键覆盖
+            if (slot.LatestTarget == null ||
+                target.SubKeyPath.Contains("Shell Extensions", StringComparison.OrdinalIgnoreCase) ||
+                !slot.LatestTarget.SubKeyPath.Contains("Shell Extensions", StringComparison.OrdinalIgnoreCase))
+            {
+                slot.LatestTarget = target;
+            }
+
+            if (Volatile.Read(ref slot.InFlight) == 1)
+            {
+                Interlocked.Exchange(ref slot.PendingRescan, 1);
+                return;
+            }
+
+            slot.DebounceTimer ??= new System.Threading.Timer(
+                _ => ExecuteDebouncedSlot(target.Category, slot),
+                null,
+                Timeout.Infinite,
+                Timeout.Infinite);
+
+            try
+            {
+                slot.DebounceTimer.Change(_debounceWindowMs, Timeout.Infinite);
+            }
+            catch (ObjectDisposedException)
+            {
+            }
+        }
+    }
+
+    private void ExecuteDebouncedSlot(MonitorCategory category, CategoryDebounceSlot slot)
+    {
+        if (_stopped || !IsCategoryEnabled(category))
+            return;
+
+        if (Interlocked.CompareExchange(ref slot.InFlight, 1, 0) != 0)
+        {
+            Interlocked.Exchange(ref slot.PendingRescan, 1);
+            return;
+        }
+
+        MonitoredRegistryTarget? capturedTarget;
+        lock (slot.Gate)
+        {
+            capturedTarget = slot.LatestTarget;
+            slot.LatestTarget = null;
+        }
+
+        if (capturedTarget == null)
+        {
+            Volatile.Write(ref slot.InFlight, 0);
+            return;
+        }
+
+        bool boosted = Interlocked.Increment(ref _activeDispatches) == 1;
+        if (boosted)
+            ProcessQoSAndMemoryManager.BoostToHighPerformanceMode();
+
+        try
+        {
+            _onRegistryMutatedCallback(capturedTarget);
+        }
+        catch (Exception ex)
+        {
+            StartupGuard.Core.Storage.SharedStorageHelper.LogDiagnostic("MonitorMatrix",
+                $"Callback error ({capturedTarget.SubKeyPath}): {ex.Message}");
+        }
+        finally
+        {
+            Volatile.Write(ref slot.InFlight, 0);
+            if (Interlocked.Decrement(ref _activeDispatches) == 0)
+                ProcessQoSAndMemoryManager.EnterEcoEfficiencyMode();
+
+            if (!_stopped && Interlocked.Exchange(ref slot.PendingRescan, 0) != 0)
+            {
+                MonitoredRegistryTarget? rescanTarget;
+                lock (slot.Gate)
+                {
+                    rescanTarget = slot.LatestTarget ?? capturedTarget;
+                }
+                if (rescanTarget != null)
+                    ScheduleCoalescedDispatch(rescanTarget);
             }
         }
     }
@@ -333,9 +444,8 @@ public sealed unsafe partial class NativeSystemMonitorMatrix : IDisposable
             new(MonitorCategory.Win32Service, hklm, @"SYSTEM\CurrentControlSet\Services", true),
             new(MonitorCategory.KernelDriver, hklm, @"SYSTEM\CurrentControlSet\Control\Class", true),
 
-            // === 4. 任务计划程序监视 (TaskCache\Tree 与 Tasks) ===
+            // === 4. 任务计划程序监视 (仅监听 TaskCache\Tree 与 C:\Windows\System32\Tasks，避开 TaskCache\Tasks\{GUID}\DynamicInfo 高频噪音) ===
             new(MonitorCategory.ScheduledTask, hklm, @"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Schedule\TaskCache\Tree", true),
-            new(MonitorCategory.ScheduledTask, hklm, @"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Schedule\TaskCache\Tasks", true),
 
             // === 5. 经典与现代上下文菜单监视 (HKLM Classes + PackagedCom + Shell Extensions\Approved WOW64) ===
             // 注：SOFTWARE\Classes\*\Directory\Folder 等由系统共享视图托管，不走 WOW6432Node 重定向，避免重复开双监听线程引发连环触发
@@ -402,6 +512,13 @@ public sealed unsafe partial class NativeSystemMonitorMatrix : IDisposable
 
     public void StopAllWatchers()
     {
+        _stopped = true;
+        foreach (var slot in _debounceSlots.Values)
+        {
+            slot.Dispose();
+        }
+        _debounceSlots.Clear();
+
         try { _stopSignal?.Set(); } catch { }
         try { _stopWaitHandle?.Set(); } catch { }
 
