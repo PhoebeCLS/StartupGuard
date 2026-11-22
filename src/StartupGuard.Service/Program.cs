@@ -262,6 +262,17 @@ public static class Program
         _contextMenuEngine = new ContextMenuManagerEngine();
         _etwTracker = new EtwKernelRegistryTracker();
         _differ = new SystemStateSnapshotDiffer();
+        _differ.OnPersistedBaselinesEvicted = evictedKeys =>
+        {
+            if (evictedKeys == null || evictedKeys.Count == 0)
+                return;
+            var snapshotKeys = evictedKeys.ToArray();
+            _ = Task.Run(() =>
+            {
+                try { _sqliteRepo.RemoveKnownBaselinesBatch(snapshotKeys); }
+                catch { }
+            });
+        };
 
         // 3. 解析当前交互式桌面用户的 SID (跨会话定向 HKEY_USERS\<SID>)
         (_, _activeInteractiveUserSid) = InteractiveUserHiveResolver.TryGetActiveInteractiveUserSid();
@@ -298,20 +309,32 @@ public static class Program
         }
         catch { }
 
-        // 5. 开机首态：先载入持久化基线，再抓取系统全量快照并与基线合并持久化（杜绝延迟挂载与自检删建误报）
+        // 5. 开机首态：先载入持久化基线（清理历史服务/驱动遗留记录），再抓取系统全量快照并与基线合并持久化（杜绝延迟挂载与自检删建误报）
         try
         {
-            var persisted = _sqliteRepo.LoadAllKnownBaselines();
+            var allPersisted = _sqliteRepo.LoadAllKnownBaselines();
+            var legacyServiceKeys = allPersisted
+                .Where(r => r.Category is MonitorCategory.Win32Service or MonitorCategory.KernelDriver)
+                .Select(r => r.LocationKey)
+                .ToList();
+            var persisted = allPersisted
+                .Where(r => r.Category is not (MonitorCategory.Win32Service or MonitorCategory.KernelDriver))
+                .ToList();
             _differ.LoadPersistedBaselines(persisted);
             var initialSnapshot = _differ.CaptureFullSnapshot(_activeInteractiveUserSid, _contextMenuEngine);
             var exportList = _differ.ExportCurrentSnapshotAsBaselines(initialSnapshot);
             _ = Task.Run(() =>
             {
-                try { _sqliteRepo.UpsertKnownBaselinesBatch(exportList); }
+                try
+                {
+                    if (legacyServiceKeys.Count > 0)
+                        _sqliteRepo.RemoveKnownBaselinesBatch(legacyServiceKeys);
+                    _sqliteRepo.UpsertKnownBaselinesBatch(exportList);
+                }
                 catch { }
             });
             SharedStorageHelper.LogDiagnostic("Service",
-                $"Initial memory baseline captured: {initialSnapshot.Count} items (persisted={persisted.Count}).");
+                $"Initial memory baseline captured: {initialSnapshot.Count} items (persisted={persisted.Count}, purgedLegacy={legacyServiceKeys.Count}).");
         }
         catch (Exception ex)
         {
@@ -997,7 +1020,10 @@ public static class Program
                     _ => "Rollback"
                 };
                 _differ.UpdateSnapshotItemState(target.LocationKeyOrIdentifier, rolledBackState);
-                SyncTargetPersistedBaseline(target, rolledBackState);
+                if (target.Category is not (MonitorCategory.Win32Service or MonitorCategory.KernelDriver))
+                {
+                    SyncTargetPersistedBaseline(target, rolledBackState);
+                }
             }
         }
         return ok;

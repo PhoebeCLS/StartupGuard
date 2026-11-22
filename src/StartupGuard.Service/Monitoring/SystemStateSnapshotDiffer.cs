@@ -78,6 +78,8 @@ public sealed unsafe partial class SystemStateSnapshotDiffer
 
     internal DateTime BaselineEstablishedUtc { get; set; } = DateTime.UtcNow;
 
+    public Action<IReadOnlyList<string>>? OnPersistedBaselinesEvicted { get; set; }
+
     public IReadOnlyDictionary<string, SnapshotItem> CurrentSnapshot => _cachedSnapshot;
 
     public bool IsUserFullyHydrated(string? userSid)
@@ -114,6 +116,11 @@ public sealed unsafe partial class SystemStateSnapshotDiffer
         var result = new List<KnownBaselineRecord>(items.Length);
         foreach (var item in items)
         {
+            // Win32 服务与内核驱动位于 HKLM\SYSTEM\CurrentControlSet\Services，启动采集时已全量就绪，
+            // 不存在 HKU 延迟挂载问题；豁免持久化可防止卸载重装同路径/同时间戳安装包时被静默吞掉
+            if (item.Category is MonitorCategory.Win32Service or MonitorCategory.KernelDriver)
+                continue;
+
             bool resolveDiskStamp = item.Category is MonitorCategory.StartupItem
                 or MonitorCategory.ScheduledTask
                 or MonitorCategory.ClassicContextMenu
@@ -163,6 +170,9 @@ public sealed unsafe partial class SystemStateSnapshotDiffer
     public KnownBaselineRecord? BuildAndTrackPersistedBaseline(TargetProgramFeatures target, string rawState)
     {
         if (target == null || string.IsNullOrWhiteSpace(target.LocationKeyOrIdentifier))
+            return null;
+
+        if (target.Category is MonitorCategory.Win32Service or MonitorCategory.KernelDriver)
             return null;
 
         var nowUtc = DateTime.UtcNow;
@@ -268,6 +278,28 @@ public sealed unsafe partial class SystemStateSnapshotDiffer
 
         if (live.RawState.Contains("Enabled=True", StringComparison.OrdinalIgnoreCase))
             return true;
+
+        if (live.Category is MonitorCategory.Win32Service or MonitorCategory.KernelDriver)
+        {
+            if (live.RawState.Contains("Start=4", StringComparison.OrdinalIgnoreCase) ||
+                live.RawState.Contains("Start: 4", StringComparison.OrdinalIgnoreCase) ||
+                live.RawState.Contains("Start=3", StringComparison.OrdinalIgnoreCase) ||
+                live.RawState.Contains("Start: 3", StringComparison.OrdinalIgnoreCase) ||
+                live.RawState.Contains("Delayed=True", StringComparison.OrdinalIgnoreCase) ||
+                live.RawState.Contains("Delayed: True", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(live.RawState.Trim(), "Deleted", StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            if (live.RawState.Contains("Start=2", StringComparison.OrdinalIgnoreCase) ||
+                live.RawState.Contains("Start: 2", StringComparison.OrdinalIgnoreCase) ||
+                live.RawState.Contains("Start=0", StringComparison.OrdinalIgnoreCase) ||
+                live.RawState.Contains("Start=1", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
 
         return null;
     }
@@ -919,28 +951,60 @@ public sealed unsafe partial class SystemStateSnapshotDiffer
             || string.Equals(rawState.Trim(), "Deleted", StringComparison.OrdinalIgnoreCase);
     }
 
-    private bool ShouldSuppressAsPreExistingOrUnchangedBaseline(SnapshotItem live, DateTime nowUtc)
+    private static bool IsRestrictedOrRollbackRawState(MonitorCategory category, string? rawState)
     {
+        if (IsRawStateExplicitlyDisabled(rawState))
+            return true;
+
+        if (string.IsNullOrWhiteSpace(rawState))
+            return false;
+
+        if (category is MonitorCategory.Win32Service or MonitorCategory.KernelDriver)
+        {
+            return rawState.Contains("Start: 3", StringComparison.OrdinalIgnoreCase)
+                || rawState.Contains("Start=3", StringComparison.OrdinalIgnoreCase)
+                || rawState.Contains("Delayed: True", StringComparison.OrdinalIgnoreCase)
+                || rawState.Contains("Delayed=True", StringComparison.OrdinalIgnoreCase)
+                || rawState.Contains("Rollback", StringComparison.OrdinalIgnoreCase);
+        }
+
+        return false;
+    }
+
+    private bool ShouldSuppressAsPreExistingOrUnchangedBaseline(SnapshotItem live, DateTime nowUtc)
+        => TryGetBaselineSuppressionReason(live, nowUtc, out _);
+
+    private bool TryGetBaselineSuppressionReason(SnapshotItem live, DateTime nowUtc, out string reason)
+    {
+        reason = string.Empty;
         if (HasToggleSiblingInSnapshot(live.LocationKey))
             return false;
 
         bool? liveEnabled = TryParseLiveEnabledState(live);
-        bool liveDisabled = liveEnabled == false || IsRawStateExplicitlyDisabled(live.RawState);
+        bool liveDisabled = liveEnabled == false || IsRestrictedOrRollbackRawState(live.Category, live.RawState);
 
-        // 1. 瞬态删建复用判定（典型如 OneDrive 开机检查先删 Run 值后 50ms 写回同路径）：30 秒内曾移除且非从禁用变启用
-        if (_recentlyRemovedItems.TryGetValue(live.LocationKey, out var removed))
+        // 1. 瞬态删建复用判定（仅限 StartupItem 如 OneDrive 开机先删 Run 值后短时间写回同路径）：10 秒内曾移除、文件仍在磁盘且非从受限态复活
+        if (live.Category == MonitorCategory.StartupItem &&
+            _recentlyRemovedItems.TryGetValue(live.LocationKey, out var removed))
         {
-            if ((nowUtc - removed.RemovedUtc).TotalSeconds <= 30.0)
+            if ((nowUtc - removed.RemovedUtc).TotalSeconds <= 10.0)
             {
                 bool prevDisabled = TryParseLiveEnabledState(removed.Item) == false ||
-                                    IsRawStateExplicitlyDisabled(removed.Item.RawState);
+                                    IsRestrictedOrRollbackRawState(removed.Item.Category, removed.Item.RawState);
                 if (prevDisabled && !liveDisabled)
                     return false;
 
                 string prevNorm = PathNormalizerAndSimilarity.NormalizeProgramPath(removed.Item.CommandOrBinaryPath);
                 string liveNorm = PathNormalizerAndSimilarity.NormalizeProgramPath(live.CommandOrBinaryPath);
                 if (string.Equals(prevNorm, liveNorm, StringComparison.OrdinalIgnoreCase))
+                {
+                    string phys = ShellNavigationHelper.ResolvePhysicalFilePath(live.CommandOrBinaryPath);
+                    if (!string.IsNullOrWhiteSpace(phys) && Path.IsPathRooted(phys) && !File.Exists(phys))
+                        return false;
+
+                    reason = "transient";
                     return true;
+                }
             }
             else
             {
@@ -948,11 +1012,13 @@ public sealed unsafe partial class SystemStateSnapshotDiffer
             }
         }
 
-        // 2. 持久化基线判定：既已存在且物理文件未发生版本更新，并且之前非用户明确禁止状态
-        if (TryGetPersistedBaselineRecord(live.LocationKey, out var persisted))
+        // 2. 持久化基线判定（Win32Service / KernelDriver 不参与持久化豁免，确保服务卸载重装必截）：
+        //    其他类别仅在既已存在、物理文件未更新且之前非受限/回滚状态时才静默放行
+        if (live.Category is not (MonitorCategory.Win32Service or MonitorCategory.KernelDriver) &&
+            TryGetPersistedBaselineRecord(live.LocationKey, out var persisted))
         {
-            bool prevDisabled = IsRawStateExplicitlyDisabled(persisted.RawState);
-            if (prevDisabled && !liveDisabled)
+            bool prevRestricted = IsRestrictedOrRollbackRawState(live.Category, persisted.RawState);
+            if (prevRestricted && !liveDisabled)
                 return false;
 
             if (persisted.FileLength > 0 && persisted.FileLastWriteUtcTicks > 0)
@@ -962,12 +1028,16 @@ public sealed unsafe partial class SystemStateSnapshotDiffer
                     return false;
             }
 
+            reason = "persisted";
             return true;
         }
 
         // 3. 注册表子键 / UWP 子键 / Task XML 原生写入时间明确早于基线建立前
         if (IsPreExistingUnmonitoredEntry(live))
+        {
+            reason = "preexisting";
             return true;
+        }
 
         // 4. 开机登录延迟初始化兜底：服务启动前 120 秒内，HKU 用户配置单元刚延迟写入但物理文件早就存在于硬盘上（2 分钟前）
         bool withinBootWindow = (nowUtc - BaselineEstablishedUtc).TotalSeconds <= 120.0;
@@ -990,7 +1060,10 @@ public sealed unsafe partial class SystemStateSnapshotDiffer
         {
             var (exists, liveTicks, _) = ResolvePhysicalFileStamp(live.CommandOrBinaryPath);
             if (exists && liveTicks > 0 && new DateTime(liveTicks, DateTimeKind.Utc) < BaselineEstablishedUtc.AddMinutes(-2))
+            {
+                reason = "bootwindow";
                 return true;
+            }
         }
 
         return false;
@@ -1012,9 +1085,14 @@ public sealed unsafe partial class SystemStateSnapshotDiffer
 
         if (!_cachedSnapshot.TryGetValue(live.LocationKey, out var existing))
         {
-            if (ShouldSuppressAsPreExistingOrUnchangedBaseline(live, DateTime.UtcNow))
+            if (TryGetBaselineSuppressionReason(live, DateTime.UtcNow, out string reason))
             {
                 _cachedSnapshot[live.LocationKey] = live;
+                if (StartupGuard.Core.Configuration.UserSettingsStore.GetDiagnosticLoggingEnabled())
+                {
+                    SharedStorageHelper.LogDiagnostic("BaselineSuppress",
+                        $"reason={reason} cat={live.Category} loc={live.LocationKey} raw=[{live.RawState}]");
+                }
                 return;
             }
 
@@ -1023,8 +1101,9 @@ public sealed unsafe partial class SystemStateSnapshotDiffer
         }
         else if (!string.Equals(existing.RawState, live.RawState, StringComparison.OrdinalIgnoreCase))
         {
-            // 若前后均处于已启用状态（仅 Scene/描述文本等元数据差异），静默吸收至基线，不重复触发拦截弹窗
-            bool bothEnabled = TryParseLiveEnabledState(existing) == true && TryParseLiveEnabledState(live) == true;
+            // 若前后均处于同路径已启用状态（仅 Scene/描述文本等元数据差异），静默吸收至基线，不重复触发拦截弹窗
+            bool sameCommand = string.Equals(existing.CommandOrBinaryPath, live.CommandOrBinaryPath, StringComparison.OrdinalIgnoreCase);
+            bool bothEnabled = sameCommand && TryParseLiveEnabledState(existing) == true && TryParseLiveEnabledState(live) == true;
             if (!bothEnabled)
             {
                 changedList.Add((live, existing));
@@ -1052,6 +1131,7 @@ public sealed unsafe partial class SystemStateSnapshotDiffer
         ContextMenuManagerEngine contextMenuEngine)
     {
         List<(SnapshotItem Live, SnapshotItem? Previous)> changedList;
+        var evictedBaselineKeys = new List<string>();
         lock (_diffSyncLock)
         {
             EnsureAllActiveUsersHydratedLocked(activeUserSid, contextMenuEngine);
@@ -1107,7 +1187,8 @@ public sealed unsafe partial class SystemStateSnapshotDiffer
                 _cachedSnapshot[live.LocationKey] = live;
             }
 
-            // 同步清理已消失项目并登记 30s 瞬态删建保护，确保既支持卸载重装复检，又防止 OneDrive 等自检删建误报
+            // 同步清理已消失项目；仅当 StartupItem 物理文件仍存在时登记 10s 瞬态删建保护（如 OneDrive 自检），
+            // 其余项目或物理文件已移除则立即驱逐持久化基线与扫描缓存，确保卸载重装必重新拦截。
             var liveKeys = new HashSet<string>(liveItems.Select(x => x.LocationKey), StringComparer.OrdinalIgnoreCase);
             var coveredSet = new HashSet<MonitorCategory>(coveredCategories);
             var removedKeys = _cachedSnapshot
@@ -1121,7 +1202,38 @@ public sealed unsafe partial class SystemStateSnapshotDiffer
             {
                 if (_cachedSnapshot.TryRemove(remKey, out var remItem))
                 {
-                    _recentlyRemovedItems[remKey] = (remItem, nowUtc);
+                    if (remItem.Category is MonitorCategory.Win32Service or MonitorCategory.KernelDriver)
+                    {
+                        string svcName = PrivilegedRollbackEngine.ExtractLeafKeyName(remKey);
+                        if (!string.IsNullOrEmpty(svcName))
+                            _serviceScanCache.TryRemove(svcName, out _);
+
+                        RemovePersistedBaseline(remKey);
+                        evictedBaselineKeys.Add(remKey);
+                    }
+                    else if (remItem.Category == MonitorCategory.StartupItem)
+                    {
+                        string phys = ShellNavigationHelper.ResolvePhysicalFilePath(remItem.CommandOrBinaryPath);
+                        bool uninstalledMissingFile = !string.IsNullOrWhiteSpace(phys) &&
+                                                      Path.IsPathRooted(phys) &&
+                                                      !phys.Contains(@"\System32\", StringComparison.OrdinalIgnoreCase) &&
+                                                      !phys.Contains(@"\SysWOW64\", StringComparison.OrdinalIgnoreCase) &&
+                                                      !File.Exists(phys);
+                        if (uninstalledMissingFile)
+                        {
+                            RemovePersistedBaseline(remKey);
+                            evictedBaselineKeys.Add(remKey);
+                        }
+                        else
+                        {
+                            _recentlyRemovedItems[remKey] = (remItem, nowUtc);
+                        }
+                    }
+                    else if (!HasToggleSiblingInSnapshot(remKey))
+                    {
+                        RemovePersistedBaseline(remKey);
+                        evictedBaselineKeys.Add(remKey);
+                    }
                 }
             }
 
@@ -1130,9 +1242,20 @@ public sealed unsafe partial class SystemStateSnapshotDiffer
             {
                 foreach (var kv in _recentlyRemovedItems)
                 {
-                    if ((nowUtc - kv.Value.RemovedUtc).TotalSeconds > 60.0)
+                    if ((nowUtc - kv.Value.RemovedUtc).TotalSeconds > 30.0)
                         _recentlyRemovedItems.TryRemove(kv.Key, out _);
                 }
+            }
+        }
+
+        if (evictedBaselineKeys.Count > 0)
+        {
+            try
+            {
+                OnPersistedBaselinesEvicted?.Invoke(evictedBaselineKeys);
+            }
+            catch
+            {
             }
         }
 
@@ -1529,13 +1652,17 @@ public sealed unsafe partial class SystemStateSnapshotDiffer
                         string displayName = ReadRegistryString(hSingle, "DisplayName");
 
                         bool isDriver = (svcType & 0x01) != 0 || (svcType & 0x02) != 0 || (svcType & 0x08) != 0;
+                        uint delayedAuto = isDriver ? 0u : ReadRegistryDword(hSingle, "DelayedAutostart");
                         var cat = isDriver ? MonitorCategory.KernelDriver : MonitorCategory.Win32Service;
+                        string rawState = isDriver
+                            ? $"Start={startType}, Type=0x{svcType:X}, Name={svcName}, DisplayName={displayName}"
+                            : $"Start={startType}, Delayed={delayedAuto == 1}, Type=0x{svcType:X}, Name={svcName}, DisplayName={displayName}";
 
                         var item = new SnapshotItem(
                             cat,
                             $@"HKLM\{singleSvcPath}",
                             imagePath,
-                            $"Start={startType}, Type=0x{svcType:X}, Name={svcName}, DisplayName={displayName}");
+                            rawState);
 
                         if (lastWriteFt != 0)
                             _serviceScanCache[svcName] = (lastWriteFt, item);
@@ -1552,7 +1679,7 @@ public sealed unsafe partial class SystemStateSnapshotDiffer
                 }
             }
 
-            if (_serviceScanCache.Count > seenServices.Count + 16)
+            if (_serviceScanCache.Count > seenServices.Count)
             {
                 foreach (string key in _serviceScanCache.Keys)
                 {
