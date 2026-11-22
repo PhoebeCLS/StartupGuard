@@ -129,6 +129,18 @@ public sealed class SqliteRuleRepository : IDisposable
                 UpdatedAt DATETIME DEFAULT CURRENT_TIMESTAMP
             );
 
+            CREATE TABLE IF NOT EXISTS KnownBaselineItems (
+                LocationKey TEXT PRIMARY KEY COLLATE NOCASE,
+                Category INTEGER NOT NULL,
+                TargetBinaryPath TEXT NOT NULL DEFAULT '',
+                NormalizedPath TEXT NOT NULL DEFAULT '',
+                RawState TEXT NOT NULL DEFAULT '',
+                FileLastWriteUtcTicks INTEGER NOT NULL DEFAULT 0,
+                FileLength INTEGER NOT NULL DEFAULT 0,
+                FirstSeenUtc TEXT NOT NULL,
+                LastSeenUtc TEXT NOT NULL
+            );
+
             CREATE INDEX IF NOT EXISTS idx_rules_md5 ON Rules(CurrentMD5);
             CREATE INDEX IF NOT EXISTS idx_aliases_rule ON RuleAliases(RuleId);
             CREATE INDEX IF NOT EXISTS idx_negative_lookup ON NegativePairs(RuleId, RejectedMD5);
@@ -1090,6 +1102,143 @@ public sealed class SqliteRuleRepository : IDisposable
     /// 开源发行版本不再内置任何预置规则，规则库初始化保持完全为空（由用户自主审核生成）。
     /// </summary>
     public int SeedDefaultShowcaseRulesIfEmpty() => 0;
+
+    public List<KnownBaselineRecord> LoadAllKnownBaselines()
+    {
+        var list = new List<KnownBaselineRecord>();
+        try
+        {
+            using var conn = new SqliteConnection(_connectionString);
+            conn.Open();
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = """
+                SELECT LocationKey, Category, TargetBinaryPath, NormalizedPath, RawState,
+                       FileLastWriteUtcTicks, FileLength, FirstSeenUtc, LastSeenUtc
+                FROM KnownBaselineItems;
+                """;
+            using var reader = cmd.ExecuteReader();
+            while (reader.Read())
+            {
+                DateTime.TryParse(
+                    reader.IsDBNull(7) ? string.Empty : reader.GetString(7),
+                    System.Globalization.CultureInfo.InvariantCulture,
+                    System.Globalization.DateTimeStyles.RoundtripKind,
+                    out var firstSeen);
+                DateTime.TryParse(
+                    reader.IsDBNull(8) ? string.Empty : reader.GetString(8),
+                    System.Globalization.CultureInfo.InvariantCulture,
+                    System.Globalization.DateTimeStyles.RoundtripKind,
+                    out var lastSeen);
+
+                list.Add(new KnownBaselineRecord
+                {
+                    LocationKey = reader.GetString(0),
+                    Category = (MonitorCategory)reader.GetInt32(1),
+                    TargetBinaryPath = reader.IsDBNull(2) ? string.Empty : reader.GetString(2),
+                    NormalizedPath = reader.IsDBNull(3) ? string.Empty : reader.GetString(3),
+                    RawState = reader.IsDBNull(4) ? string.Empty : reader.GetString(4),
+                    FileLastWriteUtcTicks = reader.IsDBNull(5) ? 0L : reader.GetInt64(5),
+                    FileLength = reader.IsDBNull(6) ? 0L : reader.GetInt64(6),
+                    FirstSeenUtc = firstSeen == default ? DateTime.UtcNow : firstSeen,
+                    LastSeenUtc = lastSeen == default ? DateTime.UtcNow : lastSeen
+                });
+            }
+        }
+        catch { }
+        return list;
+    }
+
+    public void UpsertKnownBaselinesBatch(IEnumerable<KnownBaselineRecord> records)
+    {
+        if (records == null)
+            return;
+
+        var items = records as ICollection<KnownBaselineRecord> ?? records.ToList();
+        if (items.Count == 0)
+            return;
+
+        using var conn = new SqliteConnection(_connectionString);
+        conn.Open();
+        using var tx = conn.BeginTransaction();
+        using var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
+        cmd.CommandText = """
+            INSERT INTO KnownBaselineItems
+                (LocationKey, Category, TargetBinaryPath, NormalizedPath, RawState,
+                 FileLastWriteUtcTicks, FileLength, FirstSeenUtc, LastSeenUtc)
+            VALUES
+                ($loc, $cat, $bin, $norm, $raw, $ticks, $len, $first, $last)
+            ON CONFLICT(LocationKey) DO UPDATE SET
+                Category = excluded.Category,
+                TargetBinaryPath = excluded.TargetBinaryPath,
+                NormalizedPath = excluded.NormalizedPath,
+                RawState = excluded.RawState,
+                FileLastWriteUtcTicks = CASE WHEN excluded.FileLastWriteUtcTicks > 0 THEN excluded.FileLastWriteUtcTicks ELSE KnownBaselineItems.FileLastWriteUtcTicks END,
+                FileLength = CASE WHEN excluded.FileLength > 0 THEN excluded.FileLength ELSE KnownBaselineItems.FileLength END,
+                LastSeenUtc = excluded.LastSeenUtc;
+            """;
+
+        var pLoc = cmd.Parameters.Add("$loc", SqliteType.Text);
+        var pCat = cmd.Parameters.Add("$cat", SqliteType.Integer);
+        var pBin = cmd.Parameters.Add("$bin", SqliteType.Text);
+        var pNorm = cmd.Parameters.Add("$norm", SqliteType.Text);
+        var pRaw = cmd.Parameters.Add("$raw", SqliteType.Text);
+        var pTicks = cmd.Parameters.Add("$ticks", SqliteType.Integer);
+        var pLen = cmd.Parameters.Add("$len", SqliteType.Integer);
+        var pFirst = cmd.Parameters.Add("$first", SqliteType.Text);
+        var pLast = cmd.Parameters.Add("$last", SqliteType.Text);
+
+        foreach (var rec in items)
+        {
+            if (string.IsNullOrWhiteSpace(rec.LocationKey))
+                continue;
+            pLoc.Value = rec.LocationKey.Trim();
+            pCat.Value = (int)rec.Category;
+            pBin.Value = rec.TargetBinaryPath ?? string.Empty;
+            pNorm.Value = rec.NormalizedPath ?? string.Empty;
+            pRaw.Value = rec.RawState ?? string.Empty;
+            pTicks.Value = rec.FileLastWriteUtcTicks;
+            pLen.Value = rec.FileLength;
+            pFirst.Value = rec.FirstSeenUtc.ToUniversalTime().ToString("O");
+            pLast.Value = rec.LastSeenUtc.ToUniversalTime().ToString("O");
+            cmd.ExecuteNonQuery();
+        }
+
+        tx.Commit();
+    }
+
+    public int RemoveKnownBaselinesBatch(IEnumerable<string> locationKeys)
+    {
+        if (locationKeys == null)
+            return 0;
+
+        var list = locationKeys.Where(k => !string.IsNullOrWhiteSpace(k)).ToList();
+        if (list.Count == 0)
+            return 0;
+
+        using var conn = new SqliteConnection(_connectionString);
+        conn.Open();
+        using var tx = conn.BeginTransaction();
+        using var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
+        cmd.CommandText = "DELETE FROM KnownBaselineItems WHERE LOWER(LocationKey) = LOWER($loc);";
+        var pLoc = cmd.Parameters.Add("$loc", SqliteType.Text);
+        int affected = 0;
+        foreach (string key in list)
+        {
+            pLoc.Value = key.Trim();
+            affected += cmd.ExecuteNonQuery();
+        }
+        tx.Commit();
+        return affected;
+    }
+
+    public void RemoveKnownBaseline(string locationKey)
+    {
+        if (string.IsNullOrWhiteSpace(locationKey))
+            return;
+        RemoveKnownBaselinesBatch(ExpandLocationMatchVariants(locationKey));
+    }
 
     public void Dispose()
     {

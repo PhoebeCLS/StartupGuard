@@ -298,11 +298,20 @@ public static class Program
         }
         catch { }
 
-        // 5. 开机首态抓取系统全量快照到内存 differ (建立初始稳态，开机已有启动项视作可信基线，绝不重复报警)
+        // 5. 开机首态：先载入持久化基线，再抓取系统全量快照并与基线合并持久化（杜绝延迟挂载与自检删建误报）
         try
         {
+            var persisted = _sqliteRepo.LoadAllKnownBaselines();
+            _differ.LoadPersistedBaselines(persisted);
             var initialSnapshot = _differ.CaptureFullSnapshot(_activeInteractiveUserSid, _contextMenuEngine);
-            SharedStorageHelper.LogDiagnostic("Service", $"Initial memory baseline captured: {initialSnapshot.Count} items.");
+            var exportList = _differ.ExportCurrentSnapshotAsBaselines(initialSnapshot);
+            _ = Task.Run(() =>
+            {
+                try { _sqliteRepo.UpsertKnownBaselinesBatch(exportList); }
+                catch { }
+            });
+            SharedStorageHelper.LogDiagnostic("Service",
+                $"Initial memory baseline captured: {initialSnapshot.Count} items (persisted={persisted.Count}).");
         }
         catch (Exception ex)
         {
@@ -325,8 +334,9 @@ public static class Program
         _monitorMatrix = new NativeSystemMonitorMatrix(OnRegistryTargetMutated);
         _monitorMatrix.StartAllNativeWatchers(_activeInteractiveUserSid);
 
-        // 9. 进入 EcoQoS 能效核调度模式并压缩物理内存工作集 (< 8MB)
+        // 9. 进入 EcoQoS 能效核调度模式并轻度修剪物理工作集 (< 8MB)
         ProcessQoSAndMemoryManager.EnterEcoEfficiencyMode();
+        ProcessQoSAndMemoryManager.TrimWorkingSetLight();
     }
 
     /// <summary>
@@ -763,6 +773,11 @@ public static class Program
             ExecuteRollbackForTarget(target, decision.ChosenAction);
             _ = Task.Run(() => VerifyAndRetryRollbackAsync(target, decision.ChosenAction));
         }
+        else if (decision.ChosenAction == InterceptionAction.Allow)
+        {
+            string allowState = !string.IsNullOrWhiteSpace(target.NewStateSummary) ? target.NewStateSummary : "Enabled=True";
+            SyncTargetPersistedBaseline(target, allowState);
+        }
 
         // 若用户勾选了“创建规则”且未取消操作，持久化至 SQLite 规则库
         if (effectiveRememberRule)
@@ -960,6 +975,14 @@ public static class Program
             {
                 _differ.SyncMovedContextMenuSnapshot(target.LocationKeyOrIdentifier, disabled: action != InterceptionAction.Allow);
                 _differ.UpdateContextMenuEnabledInSnapshot(target.LocationKeyOrIdentifier, action == InterceptionAction.Allow);
+                SyncTargetPersistedBaseline(target, action == InterceptionAction.Allow ? "Enabled=True" : "Enabled=False");
+            }
+            else if (action == InterceptionAction.DeleteEntry)
+            {
+                _differ.UpdateSnapshotItemState(target.LocationKeyOrIdentifier, "Deleted");
+                _differ.RemovePersistedBaseline(target.LocationKeyOrIdentifier);
+                string removedLoc = target.LocationKeyOrIdentifier;
+                _ = Task.Run(() => { try { _sqliteRepo.RemoveKnownBaseline(removedLoc); } catch { } });
             }
             else
             {
@@ -971,13 +994,26 @@ public static class Program
                         PrivilegedRollbackEngine.IsUwpStartupLocation(target.LocationKeyOrIdentifier)
                         ? "Enabled=False"
                         : "Start: 4, Delayed: False",
-                    InterceptionAction.DeleteEntry => "Deleted",
                     _ => "Rollback"
                 };
                 _differ.UpdateSnapshotItemState(target.LocationKeyOrIdentifier, rolledBackState);
+                SyncTargetPersistedBaseline(target, rolledBackState);
             }
         }
         return ok;
+    }
+
+    private static void SyncTargetPersistedBaseline(TargetProgramFeatures target, string rawState)
+    {
+        var rec = _differ.BuildAndTrackPersistedBaseline(target, rawState);
+        if (rec != null)
+        {
+            _ = Task.Run(() =>
+            {
+                try { _sqliteRepo.UpsertKnownBaselinesBatch([rec]); }
+                catch { }
+            });
+        }
     }
 
     private static TargetProgramFeatures? ExtractChangedTargetFeatures(
@@ -1388,6 +1424,7 @@ public static class Program
                                         bool enabled = mutation.Action == InterceptionAction.Allow;
                                         _differ.SyncMovedContextMenuSnapshot(mutation.LocationKey, disabled: !enabled);
                                         _differ.UpdateContextMenuEnabledInSnapshot(mutation.LocationKey, enabled);
+                                        SyncTargetPersistedBaseline(target, enabled ? "Enabled=True" : "Enabled=False");
                                     }
                                     else if (mutation.Action == InterceptionAction.Allow)
                                     {
@@ -1396,6 +1433,7 @@ public static class Program
                                             ? "Enabled=True"
                                             : "Start: 2, Delayed: False";
                                         _differ.UpdateSnapshotItemState(mutation.LocationKey, restoredState);
+                                        SyncTargetPersistedBaseline(target, restoredState);
                                     }
                                 }
 
@@ -1433,20 +1471,33 @@ public static class Program
                                 if (!string.IsNullOrEmpty(report.UserSid))
                                 {
                                     bool sidChanged = !string.Equals(_activeInteractiveUserSid, report.UserSid, StringComparison.OrdinalIgnoreCase);
-                                    int absorbed = _differ.AbsorbUserBaselineSnapshot(report.UserSid, _contextMenuEngine);
-                                    if (sidChanged)
+                                    if (sidChanged || !_differ.IsUserFullyHydrated(report.UserSid))
                                     {
-                                        _activeInteractiveUserSid = report.UserSid;
-                                        _contextMenuPromptMode = UserSettingsStore.GetContextMenuPromptMode(_activeInteractiveUserSid);
-                                        _monitorMatrix.StartAllNativeWatchers(_activeInteractiveUserSid);
-                                        SharedStorageHelper.LogDiagnostic("Service",
-                                            $"Interactive user session attached: sid={_activeInteractiveUserSid}, absorbedBaseline={absorbed}");
-                                    }
-                                    else if (absorbed > 0)
-                                    {
-                                        _monitorMatrix.StartAllNativeWatchers(report.UserSid);
-                                        SharedStorageHelper.LogDiagnostic("Service",
-                                            $"User hive late-mounted baseline absorbed: sid={report.UserSid}, count={absorbed}");
+                                        int absorbed = _differ.AbsorbUserBaselineSnapshot(report.UserSid, _contextMenuEngine);
+                                        if (absorbed > 0 || sidChanged)
+                                        {
+                                            var exported = _differ.ExportCurrentSnapshotAsBaselines();
+                                            _ = Task.Run(() =>
+                                            {
+                                                try { _sqliteRepo.UpsertKnownBaselinesBatch(exported); }
+                                                catch { }
+                                            });
+                                        }
+
+                                        if (sidChanged)
+                                        {
+                                            _activeInteractiveUserSid = report.UserSid;
+                                            _contextMenuPromptMode = UserSettingsStore.GetContextMenuPromptMode(_activeInteractiveUserSid);
+                                            _monitorMatrix.StartAllNativeWatchers(_activeInteractiveUserSid);
+                                            SharedStorageHelper.LogDiagnostic("Service",
+                                                $"Interactive user session attached: sid={_activeInteractiveUserSid}, absorbedBaseline={absorbed}");
+                                        }
+                                        else if (absorbed > 0)
+                                        {
+                                            _monitorMatrix.StartAllNativeWatchers(report.UserSid);
+                                            SharedStorageHelper.LogDiagnostic("Service",
+                                                $"User hive late-mounted baseline absorbed: sid={report.UserSid}, count={absorbed}");
+                                        }
                                     }
                                 }
                                 _gameModeController.ExternalReportedInGame = report.InGame;
@@ -1630,17 +1681,50 @@ public static class Program
         }
     }
 
+    private static void ExecuteOrphanedBaselineCleanup()
+    {
+        try
+        {
+            var orphaned = _differ.FindOrphanedPersistedBaselineKeys();
+            if (orphaned.Count == 0)
+                return;
+
+            foreach (string key in orphaned)
+            {
+                _differ.RemovePersistedBaseline(key);
+            }
+            int deleted = _sqliteRepo.RemoveKnownBaselinesBatch(orphaned);
+            if (deleted > 0)
+            {
+                SharedStorageHelper.LogDiagnostic("Service", $"Removed {deleted} orphaned KnownBaselineItems whose target binaries no longer exist.");
+            }
+        }
+        catch (Exception ex)
+        {
+            SharedStorageHelper.LogDiagnostic("Service", $"ExecuteOrphanedBaselineCleanup error: {ex.Message}");
+        }
+    }
+
     private static async Task StartPeriodicMd5ValidationLoopAsync(CancellationToken ct)
     {
         // 服务启动后 10 秒执行首次单版本失效巡检，之后按周期巡检
         try { await Task.Delay(TimeSpan.FromSeconds(10), ct); } catch { return; }
 
+        DateTime lastOrphanCleanupUtc = DateTime.MinValue;
         bool startupChecked = false;
         while (!ct.IsCancellationRequested)
         {
             try
             {
-                ExecuteOrphanedContextMenuCleanup();
+                var nowUtc = DateTime.UtcNow;
+                bool idleOrInitial = lastOrphanCleanupUtc == DateTime.MinValue ||
+                    (!_gameModeController.IsCurrentlyInGameOrBusy() && IsSystemIdle(30));
+                if (idleOrInitial && (nowUtc - lastOrphanCleanupUtc) >= TimeSpan.FromMinutes(60))
+                {
+                    ExecuteOrphanedContextMenuCleanup();
+                    ExecuteOrphanedBaselineCleanup();
+                    lastOrphanCleanupUtc = nowUtc;
+                }
 
                 if (UserSettingsStore.GetMd5ValidationEnabled())
                 {
@@ -1673,6 +1757,9 @@ public static class Program
                 {
                     startupChecked = true;
                 }
+
+                // 轻度回收常驻内存物理页（不触发全量阻塞 GC）
+                ProcessQoSAndMemoryManager.TrimWorkingSetLight();
 
                 // 周期性休眠 5 分钟后再次评估
                 await Task.Delay(TimeSpan.FromMinutes(5), ct);

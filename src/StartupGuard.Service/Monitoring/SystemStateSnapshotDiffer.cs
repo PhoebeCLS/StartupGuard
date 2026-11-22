@@ -67,12 +67,184 @@ public sealed unsafe partial class SystemStateSnapshotDiffer
     private readonly ConcurrentDictionary<string, (DateTime Expiry, bool? ExpectedEnabled)> _suppressedRollbackMutations = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, bool> _hydratedUserSids = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, bool> _hydratedUserClassesSids = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, DateTime> _userHydratedUtc = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, KnownBaselineRecord> _persistedBaselines = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, (SnapshotItem Item, DateTime RemovedUtc)> _recentlyRemovedItems = new(StringComparer.OrdinalIgnoreCase);
     private static readonly ConcurrentDictionary<string, (DateTime Expiry, TargetProgramFeatures? Probed)> _probedDllCache = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly ConcurrentDictionary<string, (long LastWriteFt, SnapshotItem Item)> _serviceScanCache = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly ConcurrentDictionary<string, (long LastWriteFt, SnapshotItem? Item)> _ifeoScanCache = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly ConcurrentDictionary<string, (long LastWriteUtcTicks, long FileLength, SnapshotItem Item)> _taskFileCache = new(StringComparer.OrdinalIgnoreCase);
     private readonly object _diffSyncLock = new();
 
     internal DateTime BaselineEstablishedUtc { get; set; } = DateTime.UtcNow;
 
     public IReadOnlyDictionary<string, SnapshotItem> CurrentSnapshot => _cachedSnapshot;
+
+    public bool IsUserFullyHydrated(string? userSid)
+    {
+        if (string.IsNullOrWhiteSpace(userSid))
+            return true;
+
+        if (!_hydratedUserSids.ContainsKey(userSid))
+            return false;
+
+        return !IsUserClassesHiveMounted(userSid) || _hydratedUserClassesSids.ContainsKey(userSid);
+    }
+
+    public void LoadPersistedBaselines(IEnumerable<KnownBaselineRecord> records)
+    {
+        if (records == null)
+            return;
+
+        foreach (var rec in records)
+        {
+            if (string.IsNullOrWhiteSpace(rec.LocationKey))
+                continue;
+            _persistedBaselines[rec.LocationKey] = rec;
+        }
+    }
+
+    public List<KnownBaselineRecord> ExportCurrentSnapshotAsBaselines(IEnumerable<SnapshotItem>? subset = null)
+    {
+        var nowUtc = DateTime.UtcNow;
+        SnapshotItem[] items = subset != null
+            ? subset.ToArray()
+            : _cachedSnapshot.Values.ToArray();
+
+        var result = new List<KnownBaselineRecord>(items.Length);
+        foreach (var item in items)
+        {
+            bool resolveDiskStamp = item.Category is MonitorCategory.StartupItem
+                or MonitorCategory.ScheduledTask
+                or MonitorCategory.ClassicContextMenu
+                or MonitorCategory.ModernContextMenu
+                or MonitorCategory.WindowsPolicy;
+
+            long ticks = 0;
+            long len = 0;
+            if (resolveDiskStamp && !string.IsNullOrWhiteSpace(item.CommandOrBinaryPath))
+            {
+                (_, ticks, len) = ResolvePhysicalFileStamp(item.CommandOrBinaryPath);
+            }
+            else if (_persistedBaselines.TryGetValue(item.LocationKey, out var existingRec) &&
+                     existingRec.FileLastWriteUtcTicks > 0)
+            {
+                ticks = existingRec.FileLastWriteUtcTicks;
+                len = existingRec.FileLength;
+            }
+
+            string normPath = !string.IsNullOrWhiteSpace(item.CommandOrBinaryPath)
+                ? PathNormalizerAndSimilarity.NormalizeProgramPath(item.CommandOrBinaryPath)
+                : string.Empty;
+
+            DateTime firstSeen = _persistedBaselines.TryGetValue(item.LocationKey, out var prev)
+                ? prev.FirstSeenUtc
+                : nowUtc;
+
+            var record = new KnownBaselineRecord
+            {
+                LocationKey = item.LocationKey,
+                Category = item.Category,
+                TargetBinaryPath = item.CommandOrBinaryPath ?? string.Empty,
+                NormalizedPath = normPath,
+                RawState = item.RawState ?? string.Empty,
+                FileLastWriteUtcTicks = ticks,
+                FileLength = len,
+                FirstSeenUtc = firstSeen,
+                LastSeenUtc = nowUtc
+            };
+            _persistedBaselines[item.LocationKey] = record;
+            result.Add(record);
+        }
+
+        return result;
+    }
+
+    public KnownBaselineRecord? BuildAndTrackPersistedBaseline(TargetProgramFeatures target, string rawState)
+    {
+        if (target == null || string.IsNullOrWhiteSpace(target.LocationKeyOrIdentifier))
+            return null;
+
+        var nowUtc = DateTime.UtcNow;
+        (_, long ticks, long len) = ResolvePhysicalFileStamp(
+            !string.IsNullOrWhiteSpace(target.TargetBinaryPath) ? target.TargetBinaryPath : target.RawCommandLine);
+        string normPath = !string.IsNullOrWhiteSpace(target.NormalizedPath)
+            ? target.NormalizedPath
+            : PathNormalizerAndSimilarity.NormalizeProgramPath(target.TargetBinaryPath);
+
+        DateTime firstSeen = TryGetPersistedBaselineRecord(target.LocationKeyOrIdentifier, out var prev)
+            ? prev.FirstSeenUtc
+            : nowUtc;
+
+        var rec = new KnownBaselineRecord
+        {
+            LocationKey = target.LocationKeyOrIdentifier,
+            Category = target.Category,
+            TargetBinaryPath = !string.IsNullOrWhiteSpace(target.TargetBinaryPath) ? target.TargetBinaryPath : target.RawCommandLine,
+            NormalizedPath = normPath,
+            RawState = rawState ?? string.Empty,
+            FileLastWriteUtcTicks = ticks,
+            FileLength = len,
+            FirstSeenUtc = firstSeen,
+            LastSeenUtc = nowUtc
+        };
+        _persistedBaselines[rec.LocationKey] = rec;
+        return rec;
+    }
+
+    public void RemovePersistedBaseline(string locationKey)
+    {
+        if (string.IsNullOrWhiteSpace(locationKey))
+            return;
+
+        foreach (string variant in BuildSuppressionKeyVariants(locationKey, activeUserSid: null))
+        {
+            _persistedBaselines.TryRemove(variant, out _);
+        }
+        _persistedBaselines.TryRemove(locationKey, out _);
+    }
+
+    public List<string> FindOrphanedPersistedBaselineKeys()
+    {
+        var orphaned = new List<string>();
+        foreach (var kv in _persistedBaselines)
+        {
+            var rec = kv.Value;
+            if (rec.FileLastWriteUtcTicks <= 0 || rec.FileLength <= 0 || string.IsNullOrWhiteSpace(rec.TargetBinaryPath))
+                continue;
+
+            string phys = ShellNavigationHelper.ResolvePhysicalFilePath(rec.TargetBinaryPath);
+            if (!string.IsNullOrWhiteSpace(phys) &&
+                Path.IsPathRooted(phys) &&
+                !phys.Contains(@"\System32\", StringComparison.OrdinalIgnoreCase) &&
+                !phys.Contains(@"\SysWOW64\", StringComparison.OrdinalIgnoreCase) &&
+                !File.Exists(phys))
+            {
+                orphaned.Add(kv.Key);
+            }
+        }
+        return orphaned;
+    }
+
+    internal static (bool Exists, long LastWriteUtcTicks, long FileLength) ResolvePhysicalFileStamp(string? commandOrPath)
+    {
+        if (string.IsNullOrWhiteSpace(commandOrPath))
+            return (false, 0, 0);
+
+        try
+        {
+            string physical = ShellNavigationHelper.ResolvePhysicalFilePath(commandOrPath);
+            if (string.IsNullOrWhiteSpace(physical) || !File.Exists(physical))
+                return (false, 0, 0);
+
+            var fi = new FileInfo(physical);
+            return (true, fi.LastWriteTimeUtc.Ticks, fi.Length);
+        }
+        catch
+        {
+            return (false, 0, 0);
+        }
+    }
 
     private static bool IsGlobalClsidTargetKey(string locationKey)
     {
@@ -482,17 +654,20 @@ public sealed unsafe partial class SystemStateSnapshotDiffer
                 _cachedSnapshot[item.LocationKey] = item;
             }
 
+            var nowUtc = DateTime.UtcNow;
             _hydratedUserSids.Clear();
             _hydratedUserClassesSids.Clear();
             if (!string.IsNullOrWhiteSpace(activeUserSid))
             {
                 _hydratedUserSids[activeUserSid] = true;
+                _userHydratedUtc[activeUserSid] = nowUtc;
                 if (IsUserClassesHiveMounted(activeUserSid))
                     _hydratedUserClassesSids[activeUserSid] = true;
             }
             foreach (string loadedSid in InteractiveUserHiveResolver.GetAllLoadedUserSids())
             {
                 _hydratedUserSids[loadedSid] = true;
+                _userHydratedUtc[loadedSid] = nowUtc;
                 if (IsUserClassesHiveMounted(loadedSid))
                     _hydratedUserClassesSids[loadedSid] = true;
             }
@@ -529,6 +704,7 @@ public sealed unsafe partial class SystemStateSnapshotDiffer
             }
 
             _hydratedUserSids[userSid] = true;
+            _userHydratedUtc[userSid] = DateTime.UtcNow;
             if (classesMounted)
                 _hydratedUserClassesSids[userSid] = true;
         }
@@ -567,6 +743,7 @@ public sealed unsafe partial class SystemStateSnapshotDiffer
             }
 
             _hydratedUserSids[sid] = true;
+            _userHydratedUtc[sid] = DateTime.UtcNow;
             if (classesReady)
                 _hydratedUserClassesSids[sid] = true;
         }
@@ -628,6 +805,11 @@ public sealed unsafe partial class SystemStateSnapshotDiffer
             return false;
 
         string trimmed = locationKey.Trim();
+        if (trimmed.EndsWith("::State", StringComparison.OrdinalIgnoreCase))
+        {
+            trimmed = trimmed[..^7];
+        }
+
         if (trimmed.StartsWith("Task:", StringComparison.OrdinalIgnoreCase))
         {
             string rel = trimmed[5..].Trim().TrimStart('\\');
@@ -707,6 +889,113 @@ public sealed unsafe partial class SystemStateSnapshotDiffer
         return writeUtc < BaselineEstablishedUtc.AddSeconds(-5);
     }
 
+    private bool TryGetPersistedBaselineRecord(string locationKey, out KnownBaselineRecord record)
+    {
+        if (_persistedBaselines.TryGetValue(locationKey, out record!))
+            return true;
+
+        string canonical = SqliteRuleRepository.CanonicalizeLocationForStorage(locationKey);
+        if (!string.IsNullOrEmpty(canonical) && _persistedBaselines.TryGetValue(canonical, out record!))
+            return true;
+
+        foreach (string variant in BuildSuppressionKeyVariants(locationKey, activeUserSid: null))
+        {
+            if (_persistedBaselines.TryGetValue(variant, out record!))
+                return true;
+        }
+
+        record = null!;
+        return false;
+    }
+
+    private static bool IsRawStateExplicitlyDisabled(string? rawState)
+    {
+        if (string.IsNullOrWhiteSpace(rawState))
+            return false;
+
+        return rawState.Contains("Enabled=False", StringComparison.OrdinalIgnoreCase)
+            || rawState.Contains("Start: 4", StringComparison.OrdinalIgnoreCase)
+            || rawState.Contains("Start=4", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(rawState.Trim(), "Deleted", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private bool ShouldSuppressAsPreExistingOrUnchangedBaseline(SnapshotItem live, DateTime nowUtc)
+    {
+        if (HasToggleSiblingInSnapshot(live.LocationKey))
+            return false;
+
+        bool? liveEnabled = TryParseLiveEnabledState(live);
+        bool liveDisabled = liveEnabled == false || IsRawStateExplicitlyDisabled(live.RawState);
+
+        // 1. 瞬态删建复用判定（典型如 OneDrive 开机检查先删 Run 值后 50ms 写回同路径）：30 秒内曾移除且非从禁用变启用
+        if (_recentlyRemovedItems.TryGetValue(live.LocationKey, out var removed))
+        {
+            if ((nowUtc - removed.RemovedUtc).TotalSeconds <= 30.0)
+            {
+                bool prevDisabled = TryParseLiveEnabledState(removed.Item) == false ||
+                                    IsRawStateExplicitlyDisabled(removed.Item.RawState);
+                if (prevDisabled && !liveDisabled)
+                    return false;
+
+                string prevNorm = PathNormalizerAndSimilarity.NormalizeProgramPath(removed.Item.CommandOrBinaryPath);
+                string liveNorm = PathNormalizerAndSimilarity.NormalizeProgramPath(live.CommandOrBinaryPath);
+                if (string.Equals(prevNorm, liveNorm, StringComparison.OrdinalIgnoreCase))
+                    return true;
+            }
+            else
+            {
+                _recentlyRemovedItems.TryRemove(live.LocationKey, out _);
+            }
+        }
+
+        // 2. 持久化基线判定：既已存在且物理文件未发生版本更新，并且之前非用户明确禁止状态
+        if (TryGetPersistedBaselineRecord(live.LocationKey, out var persisted))
+        {
+            bool prevDisabled = IsRawStateExplicitlyDisabled(persisted.RawState);
+            if (prevDisabled && !liveDisabled)
+                return false;
+
+            if (persisted.FileLength > 0 && persisted.FileLastWriteUtcTicks > 0)
+            {
+                var (exists, liveTicks, liveLen) = ResolvePhysicalFileStamp(live.CommandOrBinaryPath);
+                if (!exists || liveTicks != persisted.FileLastWriteUtcTicks || liveLen != persisted.FileLength)
+                    return false;
+            }
+
+            return true;
+        }
+
+        // 3. 注册表子键 / UWP 子键 / Task XML 原生写入时间明确早于基线建立前
+        if (IsPreExistingUnmonitoredEntry(live))
+            return true;
+
+        // 4. 开机登录延迟初始化兜底：服务启动前 120 秒内，HKU 用户配置单元刚延迟写入但物理文件早就存在于硬盘上（2 分钟前）
+        bool withinBootWindow = (nowUtc - BaselineEstablishedUtc).TotalSeconds <= 120.0;
+        if (!withinBootWindow)
+        {
+            foreach (var dt in _userHydratedUtc.Values)
+            {
+                if ((nowUtc - dt).TotalSeconds <= 45.0)
+                {
+                    withinBootWindow = true;
+                    break;
+                }
+            }
+        }
+
+        if (withinBootWindow &&
+            (live.LocationKey.StartsWith(@"HKU\", StringComparison.OrdinalIgnoreCase) ||
+             live.LocationKey.StartsWith(@"HKCU\", StringComparison.OrdinalIgnoreCase) ||
+             live.Category == MonitorCategory.StartupItem))
+        {
+            var (exists, liveTicks, _) = ResolvePhysicalFileStamp(live.CommandOrBinaryPath);
+            if (exists && liveTicks > 0 && new DateTime(liveTicks, DateTimeKind.Utc) < BaselineEstablishedUtc.AddMinutes(-2))
+                return true;
+        }
+
+        return false;
+    }
+
     private void CollectDiffCandidateLocked(
         SnapshotItem live,
         List<(SnapshotItem Live, SnapshotItem? Previous)> changedList,
@@ -723,7 +1012,7 @@ public sealed unsafe partial class SystemStateSnapshotDiffer
 
         if (!_cachedSnapshot.TryGetValue(live.LocationKey, out var existing))
         {
-            if (IsPreExistingUnmonitoredEntry(live))
+            if (ShouldSuppressAsPreExistingOrUnchangedBaseline(live, DateTime.UtcNow))
             {
                 _cachedSnapshot[live.LocationKey] = live;
                 return;
@@ -762,21 +1051,11 @@ public sealed unsafe partial class SystemStateSnapshotDiffer
         string? activeUserSid,
         ContextMenuManagerEngine contextMenuEngine)
     {
-        // 针对服务/驱动/自启项/右键菜单安装器连续写入增加 150ms 稳态防抖，确保子项(Default/InprocServer32/ImagePath)完全落盘
-        if (target.Category is MonitorCategory.Win32Service
-            or MonitorCategory.KernelDriver
-            or MonitorCategory.StartupItem
-            or MonitorCategory.ClassicContextMenu
-            or MonitorCategory.ModernContextMenu)
-        {
-            Thread.Sleep(150);
-        }
-
         List<(SnapshotItem Live, SnapshotItem? Previous)> changedList;
         lock (_diffSyncLock)
         {
             EnsureAllActiveUsersHydratedLocked(activeUserSid, contextMenuEngine);
-            var liveItems = ScanSingleTargetCategory(target, activeUserSid, contextMenuEngine);
+            var (liveItems, coveredCategories) = ScanSingleTargetCategory(target, activeUserSid, contextMenuEngine);
             changedList = new List<(SnapshotItem Live, SnapshotItem? Previous)>();
 
             foreach (var live in liveItems)
@@ -784,10 +1063,11 @@ public sealed unsafe partial class SystemStateSnapshotDiffer
                 CollectDiffCandidateLocked(live, changedList);
             }
 
-            // 对右键菜单多场景连续注册 (* / Folder / Directory) 或 ImagePath 延迟写入执行统一稳态合并
-            bool needsContextMenuSettle =
-                target.Category == MonitorCategory.ClassicContextMenu || target.Category == MonitorCategory.ModernContextMenu;
-            bool needsEmptyPathRetry = changedList.Any(c => string.IsNullOrEmpty(c.Live.CommandOrBinaryPath) &&
+            // 仅当确实发现新建/状态变更项时，才对右键菜单多场景或空路径做一次 120ms 稳态二次确认，零变更事件零额外休眠
+            bool hasChanges = changedList.Count > 0;
+            bool needsContextMenuSettle = hasChanges &&
+                (target.Category == MonitorCategory.ClassicContextMenu || target.Category == MonitorCategory.ModernContextMenu);
+            bool needsEmptyPathRetry = hasChanges && changedList.Any(c => string.IsNullOrEmpty(c.Live.CommandOrBinaryPath) &&
                 (c.Live.Category == MonitorCategory.Win32Service ||
                  c.Live.Category == MonitorCategory.KernelDriver ||
                  c.Live.Category == MonitorCategory.ClassicContextMenu ||
@@ -796,7 +1076,7 @@ public sealed unsafe partial class SystemStateSnapshotDiffer
             if (needsContextMenuSettle || needsEmptyPathRetry)
             {
                 Thread.Sleep(120);
-                liveItems = ScanSingleTargetCategory(target, activeUserSid, contextMenuEngine);
+                (liveItems, coveredCategories) = ScanSingleTargetCategory(target, activeUserSid, contextMenuEngine);
                 var map = new Dictionary<string, SnapshotItem>(StringComparer.OrdinalIgnoreCase);
                 foreach (var item in liveItems)
                 {
@@ -827,19 +1107,32 @@ public sealed unsafe partial class SystemStateSnapshotDiffer
                 _cachedSnapshot[live.LocationKey] = live;
             }
 
-            // 同步清理已从系统中彻底删除/卸载的项目，确保软件卸载重装后能够再次灵敏触发拦截！
+            // 同步清理已消失项目并登记 30s 瞬态删建保护，确保既支持卸载重装复检，又防止 OneDrive 等自检删建误报
             var liveKeys = new HashSet<string>(liveItems.Select(x => x.LocationKey), StringComparer.OrdinalIgnoreCase);
+            var coveredSet = new HashSet<MonitorCategory>(coveredCategories);
             var removedKeys = _cachedSnapshot
-                .Where(kv => kv.Value.Category == target.Category ||
-                             (target.Category is MonitorCategory.Win32Service or MonitorCategory.KernelDriver &&
-                              kv.Value.Category is MonitorCategory.Win32Service or MonitorCategory.KernelDriver))
+                .Where(kv => coveredSet.Contains(kv.Value.Category))
                 .Select(kv => kv.Key)
                 .Where(k => !liveKeys.Contains(k))
                 .ToList();
 
+            var nowUtc = DateTime.UtcNow;
             foreach (var remKey in removedKeys)
             {
-                _cachedSnapshot.TryRemove(remKey, out _);
+                if (_cachedSnapshot.TryRemove(remKey, out var remItem))
+                {
+                    _recentlyRemovedItems[remKey] = (remItem, nowUtc);
+                }
+            }
+
+            // 惰性清理过期的瞬态移除记录
+            if (_recentlyRemovedItems.Count > 64)
+            {
+                foreach (var kv in _recentlyRemovedItems)
+                {
+                    if ((nowUtc - kv.Value.RemovedUtc).TotalSeconds > 60.0)
+                        _recentlyRemovedItems.TryRemove(kv.Key, out _);
+                }
             }
         }
 
@@ -1071,20 +1364,42 @@ public sealed unsafe partial class SystemStateSnapshotDiffer
         }
     }
 
-    private List<SnapshotItem> ScanSingleTargetCategory(
+    private static (List<SnapshotItem> Items, MonitorCategory[] CoveredCategories) ScanSingleTargetCategory(
         NativeSystemMonitorMatrix.MonitoredRegistryTarget target,
         string? activeUserSid,
         ContextMenuManagerEngine contextMenuEngine)
     {
-        return target.Category switch
+        switch (target.Category)
         {
-            MonitorCategory.StartupItem => ScanStartupItems(activeUserSid),
-            MonitorCategory.Win32Service or MonitorCategory.KernelDriver => ScanServicesAndDriversSubset(target.Category),
-            MonitorCategory.ScheduledTask => ScanScheduledTasks(),
-            MonitorCategory.ClassicContextMenu or MonitorCategory.ModernContextMenu => ScanContextMenus(activeUserSid, contextMenuEngine),
-            MonitorCategory.WindowsPolicy => ScanWindowsPolicies(activeUserSid),
-            _ => []
-        };
+            case MonitorCategory.StartupItem:
+                return (ScanStartupItems(activeUserSid), [MonitorCategory.StartupItem]);
+
+            case MonitorCategory.Win32Service:
+            case MonitorCategory.KernelDriver:
+                return (ScanServicesAndDriversSubset(target.Category), [MonitorCategory.Win32Service, MonitorCategory.KernelDriver]);
+
+            case MonitorCategory.ScheduledTask:
+                return (ScanScheduledTasks(), [MonitorCategory.ScheduledTask]);
+
+            case MonitorCategory.ClassicContextMenu:
+                if (target.SubKeyPath.Contains("Shell Extensions", StringComparison.OrdinalIgnoreCase))
+                {
+                    return (ScanContextMenus(activeUserSid, contextMenuEngine),
+                        [MonitorCategory.ClassicContextMenu, MonitorCategory.ModernContextMenu]);
+                }
+                return (ScanClassicOnlyContextMenusSnapshot(activeUserSid, contextMenuEngine),
+                    [MonitorCategory.ClassicContextMenu]);
+
+            case MonitorCategory.ModernContextMenu:
+                return (ScanModernOnlyContextMenusSnapshot(activeUserSid, contextMenuEngine),
+                    [MonitorCategory.ModernContextMenu]);
+
+            case MonitorCategory.WindowsPolicy:
+                return (ScanWindowsPolicies(activeUserSid), [MonitorCategory.WindowsPolicy]);
+
+            default:
+                return ([], []);
+        }
     }
 
     private static List<SnapshotItem> ScanStartupItems(string? activeUserSid)
@@ -1180,14 +1495,28 @@ public sealed unsafe partial class SystemStateSnapshotDiffer
         {
             char* subKeyName = stackalloc char[260];
             uint index = 0;
+            var seenServices = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
             while (true)
             {
                 uint cchName = 260;
-                int err = RegEnumKeyExW(hServices, index++, subKeyName, ref cchName, 0, 0, 0, out _);
+                int err = RegEnumKeyExW(hServices, index++, subKeyName, ref cchName, 0, 0, 0, out long lastWriteFt);
                 if (err != 0) break;
 
                 string svcName = new(subKeyName, 0, (int)cchName);
+                seenServices.Add(svcName);
+
+                if (lastWriteFt != 0 &&
+                    _serviceScanCache.TryGetValue(svcName, out var cached) &&
+                    cached.LastWriteFt == lastWriteFt)
+                {
+                    if (cached.Item.Category == MonitorCategory.KernelDriver)
+                        drivers.Add(cached.Item);
+                    else
+                        services.Add(cached.Item);
+                    continue;
+                }
+
                 string singleSvcPath = $@"{servicesKey}\{svcName}";
 
                 if (RegOpenKeyExW(hklm, singleSvcPath, 0, KEY_READ | KEY_WOW64_64KEY, out nint hSingle) == 0)
@@ -1208,6 +1537,9 @@ public sealed unsafe partial class SystemStateSnapshotDiffer
                             imagePath,
                             $"Start={startType}, Type=0x{svcType:X}, Name={svcName}, DisplayName={displayName}");
 
+                        if (lastWriteFt != 0)
+                            _serviceScanCache[svcName] = (lastWriteFt, item);
+
                         if (isDriver)
                             drivers.Add(item);
                         else
@@ -1217,6 +1549,15 @@ public sealed unsafe partial class SystemStateSnapshotDiffer
                     {
                         RegCloseKey(hSingle);
                     }
+                }
+            }
+
+            if (_serviceScanCache.Count > seenServices.Count + 16)
+            {
+                foreach (string key in _serviceScanCache.Keys)
+                {
+                    if (!seenServices.Contains(key))
+                        _serviceScanCache.TryRemove(key, out _);
                 }
             }
         }
@@ -1248,8 +1589,29 @@ public sealed unsafe partial class SystemStateSnapshotDiffer
         {
             try
             {
+                var seenTasks = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 foreach (var file in Directory.EnumerateFiles(tasksDir, "*", SearchOption.AllDirectories))
                 {
+                    seenTasks.Add(file);
+                    long ticks = 0;
+                    long length = 0;
+                    try
+                    {
+                        var fi = new FileInfo(file);
+                        ticks = fi.LastWriteTimeUtc.Ticks;
+                        length = fi.Length;
+                    }
+                    catch { }
+
+                    if (ticks > 0 &&
+                        _taskFileCache.TryGetValue(file, out var cached) &&
+                        cached.LastWriteUtcTicks == ticks &&
+                        cached.FileLength == length)
+                    {
+                        list.Add(cached.Item);
+                        continue;
+                    }
+
                     string relName = Path.GetRelativePath(tasksDir, file);
                     string cmd = file;
                     if (PrivilegedRollbackEngine.TryParseScheduledTaskXml(file, isXmlContent: false, out string parsedCmd, out _, out _ ) &&
@@ -1258,12 +1620,24 @@ public sealed unsafe partial class SystemStateSnapshotDiffer
                         cmd = parsedCmd;
                     }
 
-                    list.Add(new SnapshotItem(
+                    var item = new SnapshotItem(
                         MonitorCategory.ScheduledTask,
                         $@"Task: \{relName}",
                         cmd,
                         $"TaskFile: {relName}",
-                        DisplayName: Path.GetFileName(file)));
+                        DisplayName: Path.GetFileName(file));
+                    if (ticks > 0)
+                        _taskFileCache[file] = (ticks, length, item);
+                    list.Add(item);
+                }
+
+                if (_taskFileCache.Count > seenTasks.Count + 16)
+                {
+                    foreach (string key in _taskFileCache.Keys)
+                    {
+                        if (!seenTasks.Contains(key))
+                            _taskFileCache.TryRemove(key, out _);
+                    }
                 }
             }
             catch
@@ -1294,6 +1668,40 @@ public sealed unsafe partial class SystemStateSnapshotDiffer
         return list;
     }
 
+    private static List<SnapshotItem> ScanClassicOnlyContextMenusSnapshot(string? activeUserSid, ContextMenuManagerEngine contextMenuEngine)
+    {
+        var list = new List<SnapshotItem>();
+        foreach (var m in contextMenuEngine.ScanClassicOnlyContextMenus(activeUserSid))
+        {
+            if (m.MenuCategory != MonitorCategory.ClassicContextMenu)
+                continue;
+            string locKey = !string.IsNullOrWhiteSpace(m.RegistryPath) ? m.RegistryPath : m.IdKey;
+            list.Add(new SnapshotItem(
+                MonitorCategory.ClassicContextMenu,
+                locKey,
+                m.TargetBinaryOrCommand,
+                $"Enabled={m.IsEnabled}, Scene={m.ScopeScene}, Clsid={m.Clsid}",
+                DisplayName: m.DisplayTitle));
+        }
+        return list;
+    }
+
+    private static List<SnapshotItem> ScanModernOnlyContextMenusSnapshot(string? activeUserSid, ContextMenuManagerEngine contextMenuEngine)
+    {
+        var list = new List<SnapshotItem>();
+        foreach (var m in contextMenuEngine.ScanWindows11ModernMenus(activeUserSid))
+        {
+            string locKey = !string.IsNullOrWhiteSpace(m.RegistryPath) ? m.RegistryPath : m.IdKey;
+            list.Add(new SnapshotItem(
+                MonitorCategory.ModernContextMenu,
+                locKey,
+                m.TargetBinaryOrCommand,
+                $"Enabled={m.IsEnabled}, Scene={m.ScopeScene}, Clsid={m.Clsid}",
+                DisplayName: m.DisplayTitle));
+        }
+        return list;
+    }
+
     private static List<SnapshotItem> ScanWindowsPolicies(string? activeUserSid)
     {
         var list = new List<SnapshotItem>();
@@ -1303,7 +1711,7 @@ public sealed unsafe partial class SystemStateSnapshotDiffer
         nint hklm = PrivilegedRollbackEngine.HKEY_LOCAL_MACHINE;
         nint hku = PrivilegedRollbackEngine.HKEY_USERS;
 
-        // 1. IFEO 映像劫持
+        // 1. IFEO 映像劫持（按子键 LastWriteTime 增量缓存，跳过未变动的上千个空 IFEO 子键）
         const string ifeoKey = @"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options";
         if (RegOpenKeyExW(hklm, ifeoKey, 0, KEY_READ | KEY_WOW64_64KEY, out nint hIfeo) == 0)
         {
@@ -1311,12 +1719,25 @@ public sealed unsafe partial class SystemStateSnapshotDiffer
             {
                 char* subKeyName = stackalloc char[260];
                 uint index = 0;
+                var seenIfeo = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 while (true)
                 {
                     uint cchName = 260;
-                    if (RegEnumKeyExW(hIfeo, index++, subKeyName, ref cchName, 0, 0, 0, out _) != 0) break;
+                    if (RegEnumKeyExW(hIfeo, index++, subKeyName, ref cchName, 0, 0, 0, out long lastWriteFt) != 0) break;
                     string exeName = new(subKeyName, 0, (int)cchName);
+                    seenIfeo.Add(exeName);
+
+                    if (lastWriteFt != 0 &&
+                        _ifeoScanCache.TryGetValue(exeName, out var cached) &&
+                        cached.LastWriteFt == lastWriteFt)
+                    {
+                        if (cached.Item != null)
+                            list.Add(cached.Item);
+                        continue;
+                    }
+
                     string targetSubKey = $@"{ifeoKey}\{exeName}";
+                    SnapshotItem? foundItem = null;
                     if (RegOpenKeyExW(hklm, targetSubKey, 0, KEY_READ | KEY_WOW64_64KEY, out nint hExe) == 0)
                     {
                         try
@@ -1324,17 +1745,30 @@ public sealed unsafe partial class SystemStateSnapshotDiffer
                             string debugger = ReadRegistryString(hExe, "Debugger");
                             if (!string.IsNullOrEmpty(debugger))
                             {
-                                list.Add(new SnapshotItem(
+                                foundItem = new SnapshotItem(
                                     MonitorCategory.WindowsPolicy,
                                     $@"HKLM\{targetSubKey}\Debugger",
                                     debugger,
-                                    $"IFEO Debugger: {debugger}"));
+                                    $"IFEO Debugger: {debugger}");
+                                list.Add(foundItem);
                             }
                         }
                         finally
                         {
                             RegCloseKey(hExe);
                         }
+                    }
+
+                    if (lastWriteFt != 0)
+                        _ifeoScanCache[exeName] = (lastWriteFt, foundItem);
+                }
+
+                if (_ifeoScanCache.Count > seenIfeo.Count + 32)
+                {
+                    foreach (string key in _ifeoScanCache.Keys)
+                    {
+                        if (!seenIfeo.Contains(key))
+                            _ifeoScanCache.TryRemove(key, out _);
                     }
                 }
             }

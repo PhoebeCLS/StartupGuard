@@ -183,7 +183,7 @@ public sealed class RuleRecord
         _ => "#FFB900"
     };
 
-    public string RuleModeText => RuleMode == RuleMatchMode.StrictCurrentVersion ? "仅此版本" : "永久拦截";
+    public string RuleModeText => RuleMode == RuleMatchMode.StrictCurrentVersion ? "仅此版本" : "永久";
 
     public string TargetBinaryOrCommand
     {
@@ -447,5 +447,21 @@ public sealed class ManualItemMutationPayload
     public string TargetBinaryPath { get; set; } = string.Empty;
     public InterceptionAction Action { get; set; }
     public string DisplayName { get; set; } = string.Empty;
+}
+
+/// <summary>
+/// 持久化系统开机既有基线记录（避免程序开机延迟挂载或先删后建引发重复审核）
+/// </summary>
+public sealed class KnownBaselineRecord
+{
+    public string LocationKey { get; set; } = string.Empty;
+    public MonitorCategory Category { get; set; }
+    public string TargetBinaryPath { get; set; } = string.Empty;
+    public string NormalizedPath { get; set; } = string.Empty;
+    public string RawState { get; set; } = string.Empty;
+    public long FileLastWriteUtcTicks { get; set; }
+    public long FileLength { get; set; }
+    public DateTime FirstSeenUtc { get; set; } = DateTime.UtcNow;
+    public DateTime LastSeenUtc { get; set; } = DateTime.UtcNow;
 }
 
