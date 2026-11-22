@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -147,11 +148,39 @@ public static class UserSettingsStore
     public static void SetLogMaxCount(int maxCount)
         => WriteIntSetting("LogMaxCount", maxCount);
 
+    private sealed record CachedJsonSettings(long CheckedTickMs, long LastWriteUtcTicks, long FileLength, Dictionary<string, object> Values);
+    private static readonly ConcurrentDictionary<string, CachedJsonSettings> _jsonCache = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly object _diagCacheLock = new();
+    private static long _diagCachedUntilTickMs;
+    private static bool _diagCachedValue;
+
     public static bool GetDiagnosticLoggingEnabled()
-        => ReadBoolSetting("DiagnosticLogging", legacyKey: null, defaultValue: false);
+    {
+        long nowTick = Environment.TickCount64;
+        lock (_diagCacheLock)
+        {
+            if (nowTick < _diagCachedUntilTickMs)
+                return _diagCachedValue;
+        }
+
+        bool val = ReadBoolSetting("DiagnosticLogging", legacyKey: null, defaultValue: false);
+        lock (_diagCacheLock)
+        {
+            _diagCachedValue = val;
+            _diagCachedUntilTickMs = Environment.TickCount64 + 2000;
+        }
+        return val;
+    }
 
     public static void SetDiagnosticLoggingEnabled(bool enabled)
-        => WriteBoolSetting("DiagnosticLogging", enabled);
+    {
+        WriteBoolSetting("DiagnosticLogging", enabled);
+        lock (_diagCacheLock)
+        {
+            _diagCachedValue = enabled;
+            _diagCachedUntilTickMs = Environment.TickCount64 + 2000;
+        }
+    }
 
     public static bool GetMd5ValidationEnabled()
         => ReadBoolSetting("Md5ValidationEnabled", legacyKey: null, defaultValue: true);
@@ -257,11 +286,21 @@ public static class UserSettingsStore
         UpdateJsonSettings(dict => dict[regValueName] = enabled);
     }
 
+    private static void InvalidateSettingsCaches()
+    {
+        _jsonCache.Clear();
+        lock (_diagCacheLock)
+        {
+            _diagCachedUntilTickMs = 0;
+        }
+    }
+
     /// <summary>
     /// 清理运行日志、崩溃日志与临时探测缓存（不删除规则数据库和用户设置）
     /// </summary>
     public static (int DeletedFiles, long FreedBytes) PurgeLocalLogsAndCaches()
     {
+        InvalidateSettingsCaches();
         int deletedFiles = 0;
         long freedBytes = 0;
 
@@ -319,6 +358,7 @@ public static class UserSettingsStore
     /// </summary>
     public static int PurgeAllUserAndSharedDataForUninstall()
     {
+        InvalidateSettingsCaches();
         int removedCount = 0;
         if (OperatingSystem.IsWindows())
         {
@@ -542,59 +582,106 @@ public static class UserSettingsStore
         UpdateJsonSettings(obj => obj[regValueName] = value);
     }
 
+    private static Dictionary<string, object>? TryGetCachedJsonValues(string path)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(path))
+                return null;
+
+            long nowTick = Environment.TickCount64;
+            if (_jsonCache.TryGetValue(path, out var existing) &&
+                nowTick - existing.CheckedTickMs < 1500)
+            {
+                return existing.Values;
+            }
+
+            if (!File.Exists(path))
+            {
+                _jsonCache.TryRemove(path, out _);
+                return null;
+            }
+
+            var fi = new FileInfo(path);
+            long writeTicks = fi.LastWriteTimeUtc.Ticks;
+            long fileLen = fi.Length;
+
+            if (existing != null &&
+                existing.LastWriteUtcTicks == writeTicks &&
+                existing.FileLength == fileLen)
+            {
+                _jsonCache[path] = existing with { CheckedTickMs = nowTick };
+                return existing.Values;
+            }
+
+            using var doc = JsonDocument.Parse(File.ReadAllText(path));
+            var dict = new Dictionary<string, object>(StringComparer.Ordinal);
+            if (doc.RootElement.ValueKind == JsonValueKind.Object)
+            {
+                foreach (var prop in doc.RootElement.EnumerateObject())
+                {
+                    switch (prop.Value.ValueKind)
+                    {
+                        case JsonValueKind.True:
+                            dict[prop.Name] = true;
+                            break;
+                        case JsonValueKind.False:
+                            dict[prop.Name] = false;
+                            break;
+                        case JsonValueKind.Number when prop.Value.TryGetInt32(out int intVal):
+                            dict[prop.Name] = intVal;
+                            break;
+                        case JsonValueKind.String:
+                            string? s = prop.Value.GetString();
+                            if (s != null)
+                                dict[prop.Name] = s;
+                            break;
+                    }
+                }
+            }
+
+            _jsonCache[path] = new CachedJsonSettings(nowTick, writeTicks, fileLen, dict);
+            return dict;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
     private static bool TryReadJsonBool(string path, string key, out bool value)
     {
         value = false;
-        try
+        var dict = TryGetCachedJsonValues(path);
+        if (dict != null && dict.TryGetValue(key, out object? obj) && obj is bool b)
         {
-            if (!File.Exists(path))
-                return false;
-            using var doc = JsonDocument.Parse(File.ReadAllText(path));
-            if (doc.RootElement.TryGetProperty(key, out var prop) &&
-                (prop.ValueKind == JsonValueKind.True || prop.ValueKind == JsonValueKind.False))
-            {
-                value = prop.GetBoolean();
-                return true;
-            }
+            value = b;
+            return true;
         }
-        catch { }
         return false;
     }
 
     private static bool TryReadJsonInt(string path, string key, out int value)
     {
         value = 0;
-        try
+        var dict = TryGetCachedJsonValues(path);
+        if (dict != null && dict.TryGetValue(key, out object? obj) && obj is int i)
         {
-            if (!File.Exists(path))
-                return false;
-            using var doc = JsonDocument.Parse(File.ReadAllText(path));
-            if (doc.RootElement.TryGetProperty(key, out var prop) && prop.TryGetInt32(out value))
-                return true;
+            value = i;
+            return true;
         }
-        catch { }
         return false;
     }
 
     private static bool TryReadJsonString(string path, string key, out string value)
     {
         value = string.Empty;
-        try
+        var dict = TryGetCachedJsonValues(path);
+        if (dict != null && dict.TryGetValue(key, out object? obj) && obj is string s && !string.IsNullOrWhiteSpace(s))
         {
-            if (!File.Exists(path))
-                return false;
-            using var doc = JsonDocument.Parse(File.ReadAllText(path));
-            if (doc.RootElement.TryGetProperty(key, out var prop) && prop.ValueKind == JsonValueKind.String)
-            {
-                string? s = prop.GetString();
-                if (!string.IsNullOrWhiteSpace(s))
-                {
-                    value = s;
-                    return true;
-                }
-            }
+            value = s;
+            return true;
         }
-        catch { }
         return false;
     }
 
@@ -625,6 +712,7 @@ public static class UserSettingsStore
 
             modifier(root);
             File.WriteAllText(path, root.ToJsonString(IndentedJsonOptions));
+            _jsonCache.TryRemove(path, out _);
             if (ensureSharedAcl)
                 SharedStorageHelper.EnsureFilePermissions(path);
         }

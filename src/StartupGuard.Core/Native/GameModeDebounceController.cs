@@ -33,11 +33,13 @@ public sealed partial class GameModeDebounceController : IDisposable
     private readonly Func<int> _queryNotificationStateProvider;
     private readonly Func<DateTime> _utcNowProvider;
     private readonly Timer _monitorTimer;
+    private readonly bool _usesRealTimer;
     private readonly object _stateLock = new();
 
     private bool _autoGameModeEnabled = true;
     private bool _wasInFullScreenOrBusy;
     private DateTime? _leftFullScreenAtUtc;
+    private bool _disposed;
 
     public GameModeDebounceController(
         Action<IReadOnlyList<ConfidenceEvaluationResult>> onFlushDeferredAudits,
@@ -47,11 +49,25 @@ public sealed partial class GameModeDebounceController : IDisposable
         _onFlushDeferredAudits = onFlushDeferredAudits ?? (_ => { });
         _queryNotificationStateProvider = queryNotificationStateProvider ?? QueryNativeNotificationState;
         _utcNowProvider = utcNowProvider ?? (() => DateTime.UtcNow);
+        _usesRealTimer = queryNotificationStateProvider is null && utcNowProvider is null;
 
-        TimeSpan period = (queryNotificationStateProvider is null && utcNowProvider is null)
-            ? TimeSpan.FromSeconds(3)
-            : Timeout.InfiniteTimeSpan;
-        _monitorTimer = new Timer(OnStateCheckTick, null, period, period);
+        // 空闲零唤醒：仅在存在待审核积压项时按需激活 3 秒检测定时器
+        _monitorTimer = new Timer(OnStateCheckTick, null, Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+    }
+
+    private void UpdateMonitorTimerLocked(bool active)
+    {
+        if (!_usesRealTimer || _disposed)
+            return;
+
+        try
+        {
+            TimeSpan dueAndPeriod = active ? TimeSpan.FromSeconds(3) : Timeout.InfiniteTimeSpan;
+            _monitorTimer.Change(dueAndPeriod, dueAndPeriod);
+        }
+        catch (ObjectDisposedException)
+        {
+        }
     }
 
     private static int QueryNativeNotificationState()
@@ -154,6 +170,7 @@ public sealed partial class GameModeDebounceController : IDisposable
                     batchToFlush.Add(item);
                 }
             }
+            UpdateMonitorTimerLocked(active: false);
         }
 
         if (batchToFlush is { Count: > 0 })
@@ -175,6 +192,7 @@ public sealed partial class GameModeDebounceController : IDisposable
             _pendingGameModeQueue.Enqueue(item);
             _wasInFullScreenOrBusy = true;
             _leftFullScreenAtUtc = null;
+            UpdateMonitorTimerLocked(active: true);
         }
     }
 
@@ -221,7 +239,12 @@ public sealed partial class GameModeDebounceController : IDisposable
                     {
                         batchToFlush.Add(item);
                     }
+                    UpdateMonitorTimerLocked(active: false);
                 }
+            }
+            else if (_pendingGameModeQueue.IsEmpty)
+            {
+                UpdateMonitorTimerLocked(active: false);
             }
         }
 
@@ -233,6 +256,10 @@ public sealed partial class GameModeDebounceController : IDisposable
 
     public void Dispose()
     {
+        lock (_stateLock)
+        {
+            _disposed = true;
+        }
         _monitorTimer.Dispose();
     }
 }

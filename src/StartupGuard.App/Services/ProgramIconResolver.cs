@@ -61,8 +61,12 @@ public static class ProgramIconResolver
 
             bitmapSource.Freeze(); // 冻结以确保支持跨线程与虚拟化渲染
 
+            if (_iconCache.Count >= 512)
+                _iconCache.Clear();
+
             _iconCache[cleanPath] = bitmapSource;
-            _iconCache[pathOrCommand] = bitmapSource;
+            if (!string.Equals(cleanPath, pathOrCommand, StringComparison.OrdinalIgnoreCase))
+                _iconCache[pathOrCommand] = bitmapSource;
             return bitmapSource;
         }
         catch

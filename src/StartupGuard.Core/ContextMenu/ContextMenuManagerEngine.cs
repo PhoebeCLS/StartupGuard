@@ -193,6 +193,8 @@ public sealed unsafe partial class ContextMenuManagerEngine
         // 2. 若以 @ 开头，走缓存并用 shlwapi.dll SHLoadIndirectString（原生 MUI 加载）及 LoadStringW 兜底
         if (s.StartsWith('@'))
         {
+            if (_muiStringCache.Count >= 1024)
+                _muiStringCache.Clear();
             return _muiStringCache.GetOrAdd(s, static key => ResolveAtMuiStringUncached(key));
         }
 

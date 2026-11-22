@@ -131,7 +131,6 @@ internal sealed class TrayApplicationContext : ApplicationContext
 
     private readonly System.Collections.Concurrent.ConcurrentQueue<(string Title, string Message, ToolTipIcon Icon, bool PlayErrorSound)> _balloonQueue = new();
     private readonly SemaphoreSlim _balloonSignal = new(0);
-    private readonly GameModeDebounceController _gameModeController;
     private readonly SynchronizationContext? _syncContext;
     private InterceptionDiffDialogWindow? _currentDialog;
     private bool _lastMenuIsLight;
@@ -140,10 +139,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
     {
         _syncContext = SynchronizationContext.Current ?? new WindowsFormsSynchronizationContext();
 
-        // 1. 初始化 45s Auto Game Mode 稳态防抖控制器
-        _gameModeController = new GameModeDebounceController(OnFlushDeferredGameModeBatch);
-
-        // 2. 构建现代视觉轻量原生右键菜单 (纯 GDI+ 自定义渲染，深浅主题自适应，零 WPF 驻留开销)
+        // 1. 构建现代视觉轻量原生右键菜单 (纯 GDI+ 自定义渲染，深浅主题自适应，零 WPF 驻留开销)
         bool isLight = Program.IsSystemLightTheme();
         _lastMenuIsLight = isLight;
         _contextMenu = new ContextMenuStrip
@@ -383,6 +379,11 @@ internal sealed class TrayApplicationContext : ApplicationContext
     private async Task RunIpcClientLoopAsync(CancellationToken ct)
     {
         byte[] hdrBuf = new byte[64];
+        DateTime startupUtc = DateTime.UtcNow;
+        DateTime lastSessionReportUtc = DateTime.MinValue;
+        bool lastReportedInGame = false;
+        string lastReportedSid = string.Empty;
+        DateTime lastIdleTrimUtc = DateTime.UtcNow;
 
         while (!ct.IsCancellationRequested)
         {
@@ -398,23 +399,43 @@ internal sealed class TrayApplicationContext : ApplicationContext
                     _cachedUserSid = Program.GetCurrentUserSid() ?? string.Empty;
                 }
 
-                if (_autoGameMode && (nowUtc - _lastGameCheckUtc).TotalSeconds >= 3.0)
+                if (_autoGameMode && (nowUtc - _lastGameCheckUtc).TotalSeconds >= 5.0)
                 {
                     _cachedInGame = Program.CheckIsD3DFullScreenGame();
                     _lastGameCheckUtc = nowUtc;
                 }
 
-                // 发送用户态会话状态上报 (含节流后的 3D 全屏检测与缓存用户 SID) 并拉取待审核弹窗
-                var report = new UserSessionReportPayload
+                bool currentInGame = _autoGameMode && _cachedInGame;
+                bool sessionChanged = lastSessionReportUtc == DateTime.MinValue ||
+                                      currentInGame != lastReportedInGame ||
+                                      !string.Equals(_cachedUserSid, lastReportedSid, StringComparison.OrdinalIgnoreCase);
+                double reportIntervalSec = (nowUtc - startupUtc).TotalSeconds < 60.0 ? 3.0 : 30.0;
+                bool shouldSendSessionReport = sessionChanged ||
+                                               (nowUtc - lastSessionReportUtc).TotalSeconds >= reportIntervalSec;
+
+                if (shouldSendSessionReport)
                 {
-                    InGame = _autoGameMode && _cachedInGame,
-                    UserSid = _cachedUserSid
-                };
-                byte[] reportBytes = BinaryPipeSerializer.SerializeUserSessionReport(report);
-                var pingHdr = PipeMessageHeader.Create(PipeMessageType.UserSessionReport, (uint)reportBytes.Length, 0);
-                BinaryPipeSerializer.WriteHeader(hdrBuf, in pingHdr);
-                await pipeClient.WriteAsync(hdrBuf, ct);
-                await pipeClient.WriteAsync(reportBytes, ct);
+                    // 发送用户态会话状态上报 (含节流后的 3D 全屏检测与缓存用户 SID) 并拉取待审核弹窗
+                    var report = new UserSessionReportPayload
+                    {
+                        InGame = currentInGame,
+                        UserSid = _cachedUserSid
+                    };
+                    byte[] reportBytes = BinaryPipeSerializer.SerializeUserSessionReport(report);
+                    var pingHdr = PipeMessageHeader.Create(PipeMessageType.UserSessionReport, (uint)reportBytes.Length, 0);
+                    BinaryPipeSerializer.WriteHeader(hdrBuf, in pingHdr);
+                    await pipeClient.WriteAsync(hdrBuf, ct);
+                    await pipeClient.WriteAsync(reportBytes, ct);
+                    lastSessionReportUtc = nowUtc;
+                    lastReportedInGame = currentInGame;
+                    lastReportedSid = _cachedUserSid;
+                }
+                else
+                {
+                    var hbHdr = PipeMessageHeader.Create(PipeMessageType.Heartbeat, 0, 0);
+                    BinaryPipeSerializer.WriteHeader(hdrBuf, in hbHdr);
+                    await pipeClient.WriteAsync(hdrBuf, ct);
+                }
                 await pipeClient.FlushAsync(ct);
 
                 // 仅在首次建立连接或每 15 秒检查一次策略/开关变化，避免高频轮询重复读注册表
@@ -476,6 +497,14 @@ internal sealed class TrayApplicationContext : ApplicationContext
                         }
                     }
                 }
+
+                if (!receivedPayload &&
+                    (_currentDialog == null || !_currentDialog.IsVisible) &&
+                    (nowUtc - lastIdleTrimUtc).TotalMinutes >= 10.0)
+                {
+                    lastIdleTrimUtc = nowUtc;
+                    ProcessQoSAndMemoryManager.TrimWorkingSetLight();
+                }
             }
             catch (OperationCanceledException)
             {
@@ -483,8 +512,9 @@ internal sealed class TrayApplicationContext : ApplicationContext
             }
             catch
             {
-                // 服务未启动或断开，重置已发送状态签名并等待 1000ms 重连
+                // 服务未启动或断开，重置已发送状态签名与会话上报时间并等待 1000ms 重连
                 _lastSentTogglesSignature = string.Empty;
+                lastSessionReportUtc = DateTime.MinValue;
                 await Task.Delay(1000, ct);
                 continue;
             }

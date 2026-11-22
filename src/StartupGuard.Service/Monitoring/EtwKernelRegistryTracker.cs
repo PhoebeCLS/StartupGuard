@@ -65,6 +65,11 @@ public sealed unsafe partial class EtwKernelRegistryTracker : IDisposable
     }
 
     private const int RingCapacity = 128;
+    private static readonly ulong HintRunHash = MmfBinaryStore.ComputeFnv1a64("hint:run");
+    private static readonly ulong HintServicesHash = MmfBinaryStore.ComputeFnv1a64("hint:services");
+    private static readonly ulong HintTasksHash = MmfBinaryStore.ComputeFnv1a64("hint:tasks");
+    private static readonly ulong HintContextMenuHash = MmfBinaryStore.ComputeFnv1a64("hint:contextmenu");
+
     private readonly RecentWriteSlot[] _ringBuffer = new RecentWriteSlot[RingCapacity];
     private readonly int _selfPid = Environment.ProcessId;
     private int _writeCursor;
@@ -198,22 +203,21 @@ public sealed unsafe partial class EtwKernelRegistryTracker : IDisposable
         ulong keyHash = 0;
         if (userData != null && userDataLen >= 16 && userDataLen <= 2048)
         {
-            // 提取 UserData 中的 UTF-16 注册表键路径片段，计算统一路径特征哈希
-            string rawText = ExtractAsciiSafeUnicodeSpan(userData, userDataLen);
-            if (!string.IsNullOrEmpty(rawText))
+            // 直接在栈上提取可见字符 Span 并计算提示哈希，消除高频 ETW 回调堆字符串分配
+            int charCount = userDataLen / 2;
+            Span<char> buf = stackalloc char[Math.Min(charCount, 260)];
+            int outLen = ExtractAsciiSafeUnicodeSpan(userData, charCount, buf);
+            if (outLen >= 6)
             {
-                keyHash = ComputeLowerHintHash(rawText);
+                keyHash = ComputeLowerHintHash(buf[..outLen]);
             }
         }
 
         RecordRegistryWriteEvent(keyHash, pid);
     }
 
-    private static string ExtractAsciiSafeUnicodeSpan(byte* data, int byteLen)
+    private static int ExtractAsciiSafeUnicodeSpan(byte* data, int charCount, Span<char> buf)
     {
-        // 从事件载荷末尾或中部扫描最长可见宽字符串（常见于 CreateKey/SetValueKey）
-        int charCount = byteLen / 2;
-        Span<char> buf = stackalloc char[Math.Min(charCount, 260)];
         int outLen = 0;
         for (int i = 0; i < charCount && outLen < buf.Length; i++)
         {
@@ -225,22 +229,22 @@ public sealed unsafe partial class EtwKernelRegistryTracker : IDisposable
             else
                 outLen = 0;
         }
-        return outLen >= 6 ? new string(buf[..outLen]) : string.Empty;
+        return outLen;
     }
 
-    private static ulong ComputeLowerHintHash(string text)
+    internal static ulong ComputeLowerHintHash(ReadOnlySpan<char> text)
     {
-        if (text.Contains(@"\Run", StringComparison.OrdinalIgnoreCase))
-            return MmfBinaryStore.ComputeFnv1a64("hint:run");
-        if (text.Contains(@"\Services\", StringComparison.OrdinalIgnoreCase))
-            return MmfBinaryStore.ComputeFnv1a64("hint:services");
-        if (text.Contains(@"\TaskCache\", StringComparison.OrdinalIgnoreCase))
-            return MmfBinaryStore.ComputeFnv1a64("hint:tasks");
-        if (text.Contains(@"\ContextMenuHandlers", StringComparison.OrdinalIgnoreCase) ||
-            text.Contains(@"\DragDropHandlers", StringComparison.OrdinalIgnoreCase) ||
-            text.Contains(@"\shell\", StringComparison.OrdinalIgnoreCase) ||
-            text.Contains(@"PackagedCom", StringComparison.OrdinalIgnoreCase))
-            return MmfBinaryStore.ComputeFnv1a64("hint:contextmenu");
+        if (text.Contains(@"\Run".AsSpan(), StringComparison.OrdinalIgnoreCase))
+            return HintRunHash;
+        if (text.Contains(@"\Services\".AsSpan(), StringComparison.OrdinalIgnoreCase))
+            return HintServicesHash;
+        if (text.Contains(@"\TaskCache\".AsSpan(), StringComparison.OrdinalIgnoreCase))
+            return HintTasksHash;
+        if (text.Contains(@"\ContextMenuHandlers".AsSpan(), StringComparison.OrdinalIgnoreCase) ||
+            text.Contains(@"\DragDropHandlers".AsSpan(), StringComparison.OrdinalIgnoreCase) ||
+            text.Contains(@"\shell\".AsSpan(), StringComparison.OrdinalIgnoreCase) ||
+            text.Contains("PackagedCom".AsSpan(), StringComparison.OrdinalIgnoreCase))
+            return HintContextMenuHash;
         return 0;
     }
 
@@ -268,7 +272,12 @@ public sealed unsafe partial class EtwKernelRegistryTracker : IDisposable
         ulong categoryHintHash = 0;
         if (!string.IsNullOrEmpty(subKeyPath))
         {
-            categoryHintHash = ComputeLowerHintHash("\\" + subKeyPath);
+            Span<char> prefixed = subKeyPath.Length <= 256
+                ? stackalloc char[subKeyPath.Length + 1]
+                : new char[subKeyPath.Length + 1];
+            prefixed[0] = '\\';
+            subKeyPath.AsSpan().CopyTo(prefixed[1..]);
+            categoryHintHash = ComputeLowerHintHash(prefixed);
         }
 
         uint fallbackLatestPid = 0;

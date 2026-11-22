@@ -584,4 +584,293 @@ public sealed class V106RegressionTests
         Assert.Contains("SupportedActions: BuildManagedItemSupportedActions", appMainCs);
         Assert.DoesNotContain("（允许/禁止/删除）", helperCs);
     }
+
+    [Fact]
+    public void V106_StartupItemUninstallAndReinstall_EvictsBaselineEvenIfExeStillOnDiskAndPreservesLogoutAndTransient()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+
+        string tempDir = Path.Combine(Path.GetTempPath(), $"StartupGuardTests_v106_startup_{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempDir);
+        try
+        {
+            string appExe = Path.Combine(tempDir, "MyApp.exe");
+            File.WriteAllText(appExe, "startup-app-v1");
+            var oldWriteUtc = DateTime.UtcNow.AddDays(-3);
+            File.SetLastWriteTimeUtc(appExe, oldWriteUtc);
+            var fi = new FileInfo(appExe);
+
+            var differ = new SystemStateSnapshotDiffer
+            {
+                BaselineEstablishedUtc = DateTime.UtcNow.AddMinutes(-10)
+            };
+            var evictedKeys = new List<string>();
+            differ.OnPersistedBaselinesEvicted = keys => evictedKeys.AddRange(keys);
+
+            const string activeSyntheticSid = "S-1-5-21-999999999-888888888-1001";
+            string runLoc = $@"HKU\{activeSyntheticSid}\Software\Microsoft\Windows\CurrentVersion\Run\MyTestStartupApp";
+            string logoutLoc = @"HKU\S-1-5-21-999999999-888888888-2026\Software\Microsoft\Windows\CurrentVersion\Run\LogoutOnlyApp";
+            string uwpLoc = $@"HKCU\Software\Classes\Local Settings\Software\Microsoft\Windows\CurrentVersion\AppModel\SystemAppData\SGTestUwp_{Guid.NewGuid():N}\StartupTaskId::State";
+
+            var engine = new ContextMenuManagerEngine();
+            var nowUtc = DateTime.UtcNow;
+
+            // 先预置基线与快照：模拟正常装过 StartupItem（文件仍在硬盘）、UWP 无单文件时间戳项、以及另一注销用户 SID 项
+            differ.LoadPersistedBaselines(
+            [
+                new KnownBaselineRecord
+                {
+                    LocationKey = runLoc,
+                    Category = MonitorCategory.StartupItem,
+                    TargetBinaryPath = appExe,
+                    NormalizedPath = PathNormalizerAndSimilarity.NormalizeProgramPath(appExe),
+                    RawState = $"ValName=MyTestStartupApp, Data={appExe}, Type=1, Enabled=True",
+                    FileLastWriteUtcTicks = fi.LastWriteTimeUtc.Ticks,
+                    FileLength = fi.Length,
+                    FirstSeenUtc = nowUtc.AddHours(-1),
+                    LastSeenUtc = nowUtc.AddMinutes(-1)
+                },
+                new KnownBaselineRecord
+                {
+                    LocationKey = logoutLoc,
+                    Category = MonitorCategory.StartupItem,
+                    TargetBinaryPath = appExe,
+                    NormalizedPath = PathNormalizerAndSimilarity.NormalizeProgramPath(appExe),
+                    RawState = $"ValName=LogoutOnlyApp, Data={appExe}, Type=1, Enabled=True",
+                    FileLastWriteUtcTicks = fi.LastWriteTimeUtc.Ticks,
+                    FileLength = fi.Length,
+                    FirstSeenUtc = nowUtc.AddHours(-1),
+                    LastSeenUtc = nowUtc.AddMinutes(-1)
+                },
+                new KnownBaselineRecord
+                {
+                    LocationKey = uwpLoc,
+                    Category = MonitorCategory.StartupItem,
+                    TargetBinaryPath = "StartupTaskId",
+                    NormalizedPath = "startuptaskid",
+                    RawState = "UwpState=2, Enabled=True",
+                    FileLastWriteUtcTicks = 0,
+                    FileLength = 0,
+                    FirstSeenUtc = nowUtc.AddHours(-1),
+                    LastSeenUtc = nowUtc.AddMinutes(-1)
+                }
+            ]);
+
+            differ.ApplyCategoryBaselineSnapshot(MonitorCategory.StartupItem,
+            [
+                new SystemStateSnapshotDiffer.SnapshotItem(MonitorCategory.StartupItem, runLoc, appExe, $"ValName=MyTestStartupApp, Data={appExe}, Type=1, Enabled=True"),
+                new SystemStateSnapshotDiffer.SnapshotItem(MonitorCategory.StartupItem, logoutLoc, appExe, $"ValName=LogoutOnlyApp, Data={appExe}, Type=1, Enabled=True"),
+                new SystemStateSnapshotDiffer.SnapshotItem(MonitorCategory.StartupItem, uwpLoc, "StartupTaskId", "UwpState=2, Enabled=True")
+            ]);
+
+            // 1. 触发 StartupItem 差异扫描（仅传入 activeSyntheticSid，真实注册表无上述三项 -> 触发消失）
+            var target = new NativeSystemMonitorMatrix.MonitoredRegistryTarget(
+                MonitorCategory.StartupItem,
+                PrivilegedRollbackEngine.HKEY_USERS,
+                $@"{activeSyntheticSid}\Software\Microsoft\Windows\CurrentVersion\Run",
+                false);
+            differ.DiffAllMutatedTargets(target, 0, activeSyntheticSid, engine);
+
+            // 即使 appExe 此时依然在磁盘上，普通 Run 与无单文件时间戳的 UWP 基线也必须当场驱逐；
+            // 而未加载 SID (LogoutOnlyApp) 属于注销卸载 Hive，绝不可误清持久化基线。
+            Assert.Contains(runLoc, evictedKeys);
+            Assert.Contains(uwpLoc, evictedKeys);
+            Assert.DoesNotContain(logoutLoc, evictedKeys);
+
+            var suppressMethod = typeof(SystemStateSnapshotDiffer).GetMethod(
+                "ShouldSuppressAsPreExistingOrUnchangedBaseline",
+                BindingFlags.NonPublic | BindingFlags.Instance);
+            Assert.NotNull(suppressMethod);
+
+            // 超过 5 秒瞬态与 45 秒登录水合窗后用同安装包重装：普通 StartupItem 与 UWP 均必须拦截（返回 false）
+            var reinstalledRun = new SystemStateSnapshotDiffer.SnapshotItem(
+                MonitorCategory.StartupItem, runLoc, appExe, $"ValName=MyTestStartupApp, Data={appExe}, Type=1, Enabled=True");
+            var reinstalledUwp = new SystemStateSnapshotDiffer.SnapshotItem(
+                MonitorCategory.StartupItem, uwpLoc, "StartupTaskId", "UwpState=2, Enabled=True");
+            var restoredLogout = new SystemStateSnapshotDiffer.SnapshotItem(
+                MonitorCategory.StartupItem, logoutLoc, appExe, $"ValName=LogoutOnlyApp, Data={appExe}, Type=1, Enabled=True");
+
+            DateTime afterReinstallUtc = DateTime.UtcNow.AddSeconds(50);
+            Assert.False((bool)suppressMethod!.Invoke(differ, [reinstalledRun, afterReinstallUtc])!);
+            Assert.False((bool)suppressMethod.Invoke(differ, [reinstalledUwp, afterReinstallUtc])!);
+            // 注销用户的持久化基线仍在：重新挂载后免误报（返回 true）
+            Assert.True((bool)suppressMethod.Invoke(differ, [restoredLogout, afterReinstallUtc])!);
+
+            // 2. 4 秒内物理文件仍存在磁盘的瞬态删建（如 OneDrive 自检）仍应被吸收且标记需回写基线
+            var removedField = typeof(SystemStateSnapshotDiffer).GetField(
+                "_recentlyRemovedItems",
+                BindingFlags.NonPublic | BindingFlags.Instance);
+            Assert.NotNull(removedField);
+            var removedDict = Assert.IsType<ConcurrentDictionary<string, (SystemStateSnapshotDiffer.SnapshotItem Item, DateTime RemovedUtc)>>(
+                removedField!.GetValue(differ));
+
+            string transientRunLoc = $@"HKU\{activeSyntheticSid}\Software\Microsoft\Windows\CurrentVersion\Run\OneDriveTransientSync";
+            var transientLive = new SystemStateSnapshotDiffer.SnapshotItem(
+                MonitorCategory.StartupItem, transientRunLoc, appExe, $"ValName=OneDriveTransientSync, Data={appExe}, Type=1, Enabled=True");
+            removedDict[transientRunLoc] = (transientLive, DateTime.UtcNow.AddSeconds(-4));
+
+            var collectMethod = typeof(SystemStateSnapshotDiffer).GetMethod(
+                "CollectDiffCandidateLocked",
+                BindingFlags.NonPublic | BindingFlags.Instance);
+            Assert.NotNull(collectMethod);
+
+            var changed = new List<(SystemStateSnapshotDiffer.SnapshotItem Live, SystemStateSnapshotDiffer.SnapshotItem? Previous)>();
+            var transientRestored = new List<SystemStateSnapshotDiffer.SnapshotItem>();
+            var disabledUpdates = new List<SystemStateSnapshotDiffer.SnapshotItem>();
+
+            collectMethod!.Invoke(differ, [transientLive, changed, null, transientRestored, disabledUpdates]);
+            Assert.Empty(changed);
+            Assert.Single(transientRestored);
+            Assert.Equal(transientRunLoc, transientRestored[0].LocationKey);
+
+            var persistedTransient = differ.ExportCurrentSnapshotAsBaselines(transientRestored);
+            Assert.Single(persistedTransient);
+            Assert.Equal(transientRunLoc, persistedTransient[0].LocationKey);
+
+            // 3. StartupItem / ScheduledTask 从 Enabled=True 变为 Enabled=False：静默同步进基线，绝不误弹窗；此后复活为 Enabled=True 必拦截
+            string manualRunLoc = $@"HKU\{activeSyntheticSid}\Software\Microsoft\Windows\CurrentVersion\Run\DisabledLaterApp";
+            string taskLoc = $@"Task: \SGTestDisabledTask_{Guid.NewGuid():N}";
+            differ.ApplyCategoryBaselineSnapshot(MonitorCategory.StartupItem,
+            [
+                new SystemStateSnapshotDiffer.SnapshotItem(MonitorCategory.StartupItem, manualRunLoc, appExe, $"ValName=DisabledLaterApp, Data={appExe}, Type=1, Enabled=True")
+            ]);
+            differ.ApplyCategoryBaselineSnapshot(MonitorCategory.ScheduledTask,
+            [
+                new SystemStateSnapshotDiffer.SnapshotItem(MonitorCategory.ScheduledTask, taskLoc, appExe, "TaskFile: SGTestDisabledTask, Enabled=True")
+            ]);
+
+            var runNowDisabled = new SystemStateSnapshotDiffer.SnapshotItem(
+                MonitorCategory.StartupItem, manualRunLoc, appExe, $"ValName=DisabledLaterApp, Data={appExe}, Type=1, Enabled=False");
+            var taskNowDisabled = new SystemStateSnapshotDiffer.SnapshotItem(
+                MonitorCategory.ScheduledTask, taskLoc, appExe, "TaskFile: SGTestDisabledTask, Enabled=False");
+
+            changed.Clear();
+            disabledUpdates.Clear();
+            collectMethod.Invoke(differ, [runNowDisabled, changed, null, null, disabledUpdates]);
+            collectMethod.Invoke(differ, [taskNowDisabled, changed, null, null, disabledUpdates]);
+            Assert.Empty(changed);
+            Assert.Equal(2, disabledUpdates.Count);
+
+            var persistedAfterDisable = differ.ExportCurrentSnapshotAsBaselines(disabledUpdates);
+            Assert.Equal(2, persistedAfterDisable.Count);
+            Assert.Contains("Enabled=False", persistedAfterDisable[0].RawState);
+            Assert.Contains("Enabled=False", persistedAfterDisable[1].RawState);
+
+            var runRevived = new SystemStateSnapshotDiffer.SnapshotItem(
+                MonitorCategory.StartupItem, manualRunLoc, appExe, $"ValName=DisabledLaterApp, Data={appExe}, Type=1, Enabled=True");
+            Assert.False((bool)suppressMethod.Invoke(differ, [runRevived, DateTime.UtcNow.AddSeconds(10)])!);
+
+            // 4. TryExtractUserSidFromLocationKey 准确识别普通 HKU 项与 UWP Classes 项
+            Assert.True(SystemStateSnapshotDiffer.TryExtractUserSidFromLocationKey(runLoc, out string parsedSid, out bool needsClasses));
+            Assert.Equal(activeSyntheticSid, parsedSid);
+            Assert.False(needsClasses);
+
+            Assert.True(SystemStateSnapshotDiffer.TryExtractUserSidFromLocationKey(
+                $@"HKU\{activeSyntheticSid}\Software\Classes\Local Settings\Software\Microsoft\Windows\CurrentVersion\AppModel\SystemAppData\Pkg\Id::State",
+                out parsedSid,
+                out needsClasses));
+            Assert.Equal(activeSyntheticSid, parsedSid);
+            Assert.True(needsClasses);
+        }
+        finally
+        {
+            try { Directory.Delete(tempDir, recursive: true); } catch { }
+        }
+    }
+
+    [Fact]
+    public void V106_BackgroundPerf_ZeroAllocEtwSpanAndCachedSettingsAndOnDemandGameTimer()
+    {
+        // 1. ETW 零分配 Span 提示哈希匹配精度与 ResolveRecentWriterPid 行为一致性
+        Assert.Equal(
+            MmfBinaryStore.ComputeFnv1a64("hint:run"),
+            EtwKernelRegistryTracker.ComputeLowerHintHash(@"\REGISTRY\MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\Run".AsSpan()));
+        Assert.Equal(
+            MmfBinaryStore.ComputeFnv1a64("hint:services"),
+            EtwKernelRegistryTracker.ComputeLowerHintHash(@"\REGISTRY\MACHINE\SYSTEM\ControlSet001\Services\vivoesService".AsSpan()));
+        Assert.Equal(
+            MmfBinaryStore.ComputeFnv1a64("hint:tasks"),
+            EtwKernelRegistryTracker.ComputeLowerHintHash(@"\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Schedule\TaskCache\Tree\Demo".AsSpan()));
+        Assert.Equal(
+            MmfBinaryStore.ComputeFnv1a64("hint:contextmenu"),
+            EtwKernelRegistryTracker.ComputeLowerHintHash(@"\SOFTWARE\Classes\PackagedCom\ClassIndex\{1234}".AsSpan()));
+
+        using (var tracker = new EtwKernelRegistryTracker())
+        {
+            tracker.RecordRegistryWriteEvent(MmfBinaryStore.ComputeFnv1a64("hint:services"), 4321);
+            uint pid = tracker.ResolveRecentWriterPid(0, @"SYSTEM\CurrentControlSet\Services\Demo");
+            Assert.Equal(4321u, pid);
+        }
+
+        // 2. UserSettingsStore 缓存写后即读一致性
+        bool prevDiag = StartupGuard.Core.Configuration.UserSettingsStore.GetDiagnosticLoggingEnabled();
+        try
+        {
+            StartupGuard.Core.Configuration.UserSettingsStore.SetDiagnosticLoggingEnabled(true);
+            Assert.True(StartupGuard.Core.Configuration.UserSettingsStore.GetDiagnosticLoggingEnabled());
+            StartupGuard.Core.Configuration.UserSettingsStore.SetDiagnosticLoggingEnabled(false);
+            Assert.False(StartupGuard.Core.Configuration.UserSettingsStore.GetDiagnosticLoggingEnabled());
+        }
+        finally
+        {
+            StartupGuard.Core.Configuration.UserSettingsStore.SetDiagnosticLoggingEnabled(prevDiag);
+        }
+
+        // 3. GameModeDebounceController 按需定时器：空闲不激活、入队后 45 秒稳态退出后释放并回归空闲
+        int state = GameModeDebounceController.QUNS_RUNNING_D3D_FULL_SCREEN;
+        DateTime now = new(2026, 11, 22, 12, 0, 0, DateTimeKind.Utc);
+        var flushed = new List<ConfidenceEvaluationResult>();
+        using (var controller = new GameModeDebounceController(
+            batch => flushed.AddRange(batch),
+            () => state,
+            () => now))
+        {
+            controller.EvaluateStateTick();
+            Assert.Equal(0, controller.PendingQueueCount);
+            Assert.False(controller.IsDebounceTimerActive);
+
+            controller.EnqueueDeferredAuditItem(new ConfidenceEvaluationResult
+            {
+                FinalScore = 100,
+                Severity = DiagnosticSeverity.NormalNew,
+                DiagnosticOpinion = "Demo",
+                CurrentTarget = new TargetProgramFeatures
+                {
+                    Category = MonitorCategory.StartupItem,
+                    TargetBinaryPath = @"C:\Demo\game_updater.exe",
+                    NormalizedPath = "c:\\demo\\game_updater.exe",
+                    NormalizedPathHash = 0,
+                    RawCommandLine = @"C:\Demo\game_updater.exe",
+                    CommandLineArgsTemplate = string.Empty,
+                    LocationKeyOrIdentifier = @"HKCU\Software\Microsoft\Windows\CurrentVersion\Run\GameUpdater",
+                    MD5Hex = string.Empty,
+                    SHA256Hex = string.Empty
+                }
+            });
+
+            state = GameModeDebounceController.QUNS_ACCEPTS_NOTIFICATIONS;
+            controller.EvaluateStateTick();
+            Assert.True(controller.IsDebounceTimerActive);
+            Assert.Empty(flushed);
+
+            now = now.AddSeconds(46);
+            controller.EvaluateStateTick();
+            Assert.Single(flushed);
+            Assert.False(controller.IsDebounceTimerActive);
+            Assert.Equal(0, controller.PendingQueueCount);
+        }
+
+        // 4. 关键后台优化契约检查
+        string repoRoot = FindRepoRoot();
+        string trayCs = File.ReadAllText(Path.Combine(repoRoot, "src", "StartupGuard.TrayHost", "Program.cs"));
+        string svcCs = File.ReadAllText(Path.Combine(repoRoot, "src", "StartupGuard.Service", "Program.cs"));
+        string settingsCs = File.ReadAllText(Path.Combine(repoRoot, "src", "StartupGuard.Core", "Configuration", "UserSettingsStore.cs"));
+        string iconCs = File.ReadAllText(Path.Combine(repoRoot, "src", "StartupGuard.App", "Services", "ProgramIconResolver.cs"));
+
+        Assert.DoesNotContain("new GameModeDebounceController", trayCs);
+        Assert.Contains("SharedPipeSecurity", svcCs);
+        Assert.Contains("PurgeExpiredRuntimeCaches", svcCs);
+        Assert.Contains("CachedJsonSettings", settingsCs);
+        Assert.Contains("_iconCache.Count >= 512", iconCs);
+    }
 }
