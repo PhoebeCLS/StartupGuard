@@ -1512,15 +1512,25 @@ public partial class MainWindow : FluentWindow
         if (!(clsid.StartsWith('{') && clsid.EndsWith('}')))
             clsid = string.Empty;
 
+        string? scene = rule.Category is MonitorCategory.ClassicContextMenu or MonitorCategory.ModernContextMenu
+            ? ContextMenuSceneHelper.DescribeScene(rule.Category, rule.LocationKey)
+            : null;
+        var supportedActions = BuildRuleActionOptions(rule.Category)
+            .Select(o => o.Title)
+            .Where(t => !string.IsNullOrWhiteSpace(t))
+            .ToList();
+
         var info = new ShellNavigationHelper.AiPromptItemInfo(
             rule.CategoryName,
             rule.DisplayName,
             rule.PublisherDisplay,
             rule.TargetBinaryOrCommand,
             rule.LocationKey,
-            null,
+            scene,
             string.IsNullOrEmpty(clsid) ? null : clsid,
-            null);
+            null,
+            SupportedActions: supportedActions,
+            Category: rule.Category);
         string prompt = ShellNavigationHelper.BuildAiAgentPrompt(info);
         if (string.IsNullOrWhiteSpace(prompt)) return;
 
@@ -3032,6 +3042,27 @@ public partial class MainWindow : FluentWindow
         ShellNavigationHelper.OpenManagementConsole(_currentDetailItem.Category, _currentDetailItem.LocationKey, _currentDetailItem.CommandOrPath);
     }
 
+    internal static IReadOnlyList<string> BuildManagedItemSupportedActions(SystemStartupItemsManager.ManagedStartupItem item)
+    {
+        if (item.AvailableStateOptions.Count > 0)
+        {
+            var actions = item.AvailableStateOptions
+                .Select(o => o.Title)
+                .Where(t => !string.IsNullOrWhiteSpace(t))
+                .ToList();
+            if (item.CanDeleteItem)
+                actions.Add("删除");
+            return actions;
+        }
+
+        if (item.Category is MonitorCategory.ClassicContextMenu or MonitorCategory.ModernContextMenu)
+        {
+            return item.CanDeleteItem ? ["启用", "屏蔽", "删除"] : ["启用", "屏蔽"];
+        }
+
+        return item.CanDeleteItem ? ["启用", "禁止", "删除"] : ["启用", "禁止"];
+    }
+
     private void BtnItemDetailCopyAiPrompt_Click(object sender, RoutedEventArgs e)
     {
         if (_currentDetailItem == null) return;
@@ -3049,7 +3080,9 @@ public partial class MainWindow : FluentWindow
             _currentDetailItem.LocationKey,
             scene,
             string.IsNullOrWhiteSpace(_currentDetailItem.Clsid) ? null : _currentDetailItem.Clsid,
-            string.IsNullOrWhiteSpace(srcProc) ? null : srcProc);
+            string.IsNullOrWhiteSpace(srcProc) ? null : srcProc,
+            SupportedActions: BuildManagedItemSupportedActions(_currentDetailItem),
+            Category: _currentDetailItem.Category);
         string prompt = ShellNavigationHelper.BuildAiAgentPrompt(info);
         if (string.IsNullOrWhiteSpace(prompt)) return;
 

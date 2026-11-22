@@ -282,15 +282,27 @@ public partial class InterceptionDiffDialogWindow : FluentWindow
         return PrivilegedRollbackEngine.ExtractClsidOrIdentifier(rawCmd);
     }
 
-    private static ShellNavigationHelper.AiPromptItemInfo ToAiPromptInfo(CapturedItemViewModel vm) => new(
-        vm.CategoryName,
-        vm.DisplayName,
-        vm.Publisher,
-        vm.CommandLineText,
-        vm.LocationKey,
-        vm.HasMenuScene ? vm.MenuSceneText : null,
-        vm.HasClsid ? vm.Clsid : null,
-        vm.HasCreatorProcess ? vm.CreatorProcessText : null);
+    internal static ShellNavigationHelper.AiPromptItemInfo ToAiPromptInfo(CapturedItemViewModel vm)
+    {
+        var actions = new List<string>(vm.AvailableActions.Count + 1) { "允许" };
+        foreach (var a in vm.AvailableActions)
+        {
+            if (!string.IsNullOrWhiteSpace(a.Title))
+                actions.Add(a.Title);
+        }
+
+        return new ShellNavigationHelper.AiPromptItemInfo(
+            vm.CategoryName,
+            vm.DisplayName,
+            vm.Publisher,
+            vm.CommandLineText,
+            vm.LocationKey,
+            vm.HasMenuScene ? vm.MenuSceneText : null,
+            vm.HasClsid ? vm.Clsid : null,
+            vm.HasCreatorProcess ? vm.CreatorProcessText : null,
+            SupportedActions: actions,
+            Category: vm.Evaluation.Target.Category);
+    }
 
     public static IReadOnlyList<CapturedItemViewModel> GetSelectedItemsForAiPrompt(IEnumerable<CapturedItemViewModel>? items)
         => ShellNavigationHelper.SelectCheckedItems(items, static x => x.IsSelected);

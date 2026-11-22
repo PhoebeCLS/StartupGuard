@@ -683,12 +683,70 @@ public static unsafe partial class ShellNavigationHelper
         string? LocationKey,
         string? MenuScene = null,
         string? Clsid = null,
-        string? CreatorProcess = null);
+        string? CreatorProcess = null,
+        IReadOnlyList<string>? SupportedActions = null,
+        MonitorCategory? Category = null);
+
+    public static IReadOnlyList<string> GetDefaultSupportedActions(MonitorCategory? category, string? categoryName = null)
+    {
+        MonitorCategory? resolved = category;
+        if (resolved == null && !string.IsNullOrWhiteSpace(categoryName))
+        {
+            string name = categoryName.Trim();
+            if (name.Contains("服务", StringComparison.OrdinalIgnoreCase))
+                resolved = MonitorCategory.Win32Service;
+            else if (name.Contains("驱动", StringComparison.OrdinalIgnoreCase))
+                resolved = MonitorCategory.KernelDriver;
+            else if (name.Contains("任务", StringComparison.OrdinalIgnoreCase))
+                resolved = MonitorCategory.ScheduledTask;
+            else if (name.Contains("Win11", StringComparison.OrdinalIgnoreCase) || name.Contains("现代", StringComparison.OrdinalIgnoreCase))
+                resolved = MonitorCategory.ModernContextMenu;
+            else if (name.Contains("右键", StringComparison.OrdinalIgnoreCase) || name.Contains("菜单", StringComparison.OrdinalIgnoreCase))
+                resolved = MonitorCategory.ClassicContextMenu;
+            else if (name.Contains("策略", StringComparison.OrdinalIgnoreCase))
+                resolved = MonitorCategory.WindowsPolicy;
+            else if (name.Contains("自启", StringComparison.OrdinalIgnoreCase) || name.Contains("启动", StringComparison.OrdinalIgnoreCase))
+                resolved = MonitorCategory.StartupItem;
+        }
+
+        return resolved switch
+        {
+            MonitorCategory.Win32Service => ["允许", "回滚为手动启动", "回滚为延迟启动", "禁止服务", "删除服务"],
+            MonitorCategory.KernelDriver => ["允许", "回滚为手动加载", "禁止驱动"],
+            MonitorCategory.ScheduledTask => ["允许", "禁止计划任务", "删除计划任务"],
+            MonitorCategory.ClassicContextMenu or MonitorCategory.ModernContextMenu => ["允许", "拦截并屏蔽", "删除注册项"],
+            MonitorCategory.WindowsPolicy => ["允许", "禁止项目", "删除项目"],
+            _ => ["允许", "禁止启动项", "删除启动项"]
+        };
+    }
+
+    private static string ResolveSupportedActionsText(AiPromptItemInfo item)
+    {
+        IEnumerable<string> source = item.SupportedActions is { Count: > 0 }
+            ? item.SupportedActions
+            : GetDefaultSupportedActions(item.Category, item.CategoryName);
+
+        var distinct = new List<string>();
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (string raw in source)
+        {
+            if (string.IsNullOrWhiteSpace(raw))
+                continue;
+            string trimmed = raw.Trim();
+            if (seen.Add(trimmed))
+                distinct.Add(trimmed);
+        }
+
+        if (distinct.Count == 0)
+            distinct.AddRange(GetDefaultSupportedActions(item.Category, item.CategoryName));
+
+        return string.Join(" / ", distinct);
+    }
 
     public static string BuildAiAgentPrompt(AiPromptItemInfo item)
     {
         var sb = new System.Text.StringBuilder(256);
-        sb.AppendLine("请帮我判断以下被拦截的 Windows 启动项/扩展项是否安全、所属软件与作用，并给出处置建议（允许/禁止/删除）：");
+        sb.AppendLine("请帮我判断以下 Windows 启动项/扩展项是否安全、所属软件与作用，并结合该项支持的操作给出最合适的处置建议：");
         AppendAiPromptFields(sb, item, multiMode: false);
         return sb.ToString().TrimEnd();
     }
@@ -701,7 +759,7 @@ public static unsafe partial class ShellNavigationHelper
             return BuildAiAgentPrompt(items[0]);
 
         var sb = new System.Text.StringBuilder(items.Count * 192);
-        sb.AppendLine($"请帮我逐项判断以下 {items.Count} 个被拦截的 Windows 启动项/扩展项是否安全、所属软件与作用，并给出简明处置建议（允许/禁止/删除）：");
+        sb.AppendLine($"请帮我逐项判断以下 {items.Count} 个 Windows 启动项/扩展项是否安全、所属软件与作用，并结合各项支持的操作给出简明处置建议：");
         for (int i = 0; i < items.Count; i++)
         {
             sb.Append($"[{i + 1}] ");
@@ -720,6 +778,7 @@ public static unsafe partial class ShellNavigationHelper
         string loc = FormatForRegeditDisplay(item.LocationKey?.Trim() ?? string.Empty);
         string clsid = item.Clsid?.Trim() ?? string.Empty;
         string creator = item.CreatorProcess?.Trim() ?? string.Empty;
+        string actionsText = ResolveSupportedActionsText(item);
 
         if (multiMode)
         {
@@ -732,6 +791,7 @@ public static unsafe partial class ShellNavigationHelper
                 sb.Append($" | 位置: {loc}");
             if (!string.IsNullOrEmpty(clsid))
                 sb.Append($" | CLSID: {clsid}");
+            sb.Append($" | 支持操作: {actionsText}");
             sb.AppendLine();
             return;
         }
@@ -747,6 +807,7 @@ public static unsafe partial class ShellNavigationHelper
             sb.AppendLine($"- 注册表/位置: {loc}");
         if (!string.IsNullOrEmpty(clsid))
             sb.AppendLine($"- CLSID: {clsid}");
+        sb.AppendLine($"- 支持操作: {actionsText}");
     }
 
     public static IEnumerable<string> ExpandDisabledRegistryVariants(string subKey)
