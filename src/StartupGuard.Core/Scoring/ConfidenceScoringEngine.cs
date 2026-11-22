@@ -310,7 +310,7 @@ public sealed class ConfidenceScoringEngine
             string changedStr = changedNames.Count > 0 ? string.Join("、", changedNames) : "文件版本哈希";
             return (
                 DiagnosticSeverity.LikelySameSoftware,
-                $"💡 【系统研判意见 (可信度 {score:F0}% - 倾向于同一软件迁移/更新)】：目标程序的 {matchedStr} 与历史规则「{rule.DisplayName}」完全一致；仅 {changedStr} 发生变更。建议判定为【同一软件】并延续永久拦截规则。"
+                $"💡 【系统研判意见 (可信度 {score:F0}% - 倾向于同一软件迁移/更新)】：目标程序的 {matchedStr} 与历史规则「{rule.DisplayName}」完全一致；仅 {changedStr} 发生变更。建议判定为【同一软件】并延续永久规则。"
             );
         }
 

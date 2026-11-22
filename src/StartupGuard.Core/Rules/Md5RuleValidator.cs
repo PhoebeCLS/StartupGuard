@@ -99,7 +99,7 @@ public static class Md5RuleValidator
 
         foreach (var rule in allRules)
         {
-            // 仅探测单版本规则 (StrictCurrentVersion)，永久拦截规则 (PermanentAdaptive) 绝不自动删除
+            // 仅探测单版本规则 (StrictCurrentVersion)，永久规则 (PermanentAdaptive) 绝不自动删除
             if (rule.RuleMode != RuleMatchMode.StrictCurrentVersion)
                 continue;
 

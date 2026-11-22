@@ -229,7 +229,7 @@
         <!-- 深入分析结果浮层 -->
         <Grid x:Name="DialogDeepAnalysisHost" Grid.Row="0" Grid.RowSpan="4" Background="{DynamicResource SmokeFillColorDefaultBrush}" Visibility="Collapsed">
             <Grid Width="580" MaxHeight="440" HorizontalAlignment="Center" VerticalAlignment="Center">
-                <Border CornerRadius="8" Background="{DynamicResource SolidBackgroundFillColorBaseBrush}" IsHitTestVisible="False">
+                <Border CornerRadius="8" Background="{DynamicResource SolidBackgroundFillColorBaseBrush}" IsHitTestVisible="False" CacheMode="BitmapCache">
                     <Border.Effect>
                         <DropShadowEffect BlurRadius="36" Direction="270" ShadowDepth="8" Opacity="0.35" Color="#000000"/>
                     </Border.Effect>

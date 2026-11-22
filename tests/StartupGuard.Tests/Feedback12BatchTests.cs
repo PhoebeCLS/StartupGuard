@@ -2402,7 +2402,7 @@ public class Feedback12BatchTests
         var modalShadowMatches = System.Text.RegularExpressions.Regex.Matches(
             mainXaml,
             @"<Border(?<attrs>[^>]*)>\s*<Border\.Effect>\s*<DropShadowEffect");
-        Assert.Equal(7, modalShadowMatches.Count);
+        Assert.Equal(8, modalShadowMatches.Count);
         foreach (System.Text.RegularExpressions.Match m in modalShadowMatches)
         {
             Assert.Contains("IsHitTestVisible=\"False\"", m.Groups["attrs"].Value);
@@ -2442,13 +2442,14 @@ public class Feedback12BatchTests
 
         Assert.Contains("FluentScrollBarBehavior.IsEnabled", sharedStyles);
         Assert.Contains("FluentComboBoxBehavior.IsEnabled", sharedStyles);
-        Assert.Contains("ClickMode=\"Press\"", sharedStyles);
+        Assert.Contains("ClickMode=\"Release\"", sharedStyles);
         Assert.Contains("StaysOpen=\"False\"", sharedStyles);
-        Assert.Contains("KeySpline=\"0,0,0,1\"", sharedStyles);
-        Assert.Contains("Placement=\"Relative\"", sharedStyles);
-        Assert.Contains("FromMilliseconds(250)", comboBehavior);
-        Assert.Contains("KeySpline(0.0, 0.0, 0.0, 1.0)", comboBehavior);
+        Assert.Contains("Placement=\"Custom\"", sharedStyles);
+        Assert.Contains("CacheMode=\"BitmapCache\"", sharedStyles);
+        Assert.Contains("FromMilliseconds(183)", comboBehavior);
+        Assert.Contains("KeySpline(0.1, 0.9, 0.2, 1.0)", comboBehavior);
         Assert.Contains("DropDownBorder_PreviewMouseLeftButtonUp", comboBehavior);
+        Assert.DoesNotContain("RotateTransform", sharedStyles);
         Assert.DoesNotContain("ScaleTransform", sharedStyles);
         Assert.DoesNotContain("ScaleTransform.ScaleYProperty", mainCs);
 

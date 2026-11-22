@@ -299,10 +299,16 @@
                                Opacity="0"
                                ToolTip="返回上一页 (Alt+Left)"
                                WindowChrome.IsHitTestVisibleInChrome="True"
+                               PreviewMouseLeftButtonDown="BtnNavBack_PreviewMouseLeftButtonDown"
+                               PreviewMouseLeftButtonUp="BtnNavBack_PreviewMouseLeftButtonUp"
+                               MouseLeave="BtnNavBack_MouseLeave"
                                Click="BtnNavBack_Click">
-                        <ui:SymbolIcon Symbol="ArrowLeft24" FontSize="13">
+                        <ui:SymbolIcon Symbol="ArrowLeft24" FontSize="13" RenderTransformOrigin="0.85,0.5">
                             <ui:SymbolIcon.RenderTransform>
-                                <TranslateTransform x:Name="TranslateNavBack" X="0" />
+                                <TransformGroup>
+                                    <ScaleTransform x:Name="ScaleNavBack" ScaleX="1" ScaleY="1" />
+                                    <TranslateTransform x:Name="TranslateNavBack" X="0" />
+                                </TransformGroup>
                             </ui:SymbolIcon.RenderTransform>
                         </ui:SymbolIcon>
                     </ui:Button>
@@ -1360,7 +1366,7 @@
                                                         <MenuItem Header="设为手动" Click="MenuAuditSetManualItem_Click" Tag="{Binding}" Visibility="{Binding IsServiceOrDriverCategory, Converter={StaticResource BooleanToVisibilityConverter}}"/>
                                                         <MenuItem Header="阻止并禁止/屏蔽" Click="MenuAuditBlockItem_Click" Tag="{Binding}"/>
                                                         <MenuItem Header="删除此项" Click="MenuAuditDeleteItem_Click" Tag="{Binding}" Visibility="{Binding CanDeleteAuditItem, Converter={StaticResource BooleanToVisibilityConverter}}"/>
-                                                        <MenuItem Header="加入永久拦截规则" Click="MenuAuditPersistRule_Click" Tag="{Binding}"/>
+                                                        <MenuItem Header="加入永久阻止规则" Click="MenuAuditPersistRule_Click" Tag="{Binding}"/>
                                                         <Separator/>
                                                         <MenuItem Header="按应用查找" Click="MenuAuditManageApp_Click" Tag="{Binding}"/>
                                                         <MenuItem Header="深入分析" Click="BtnAuditAnalyzeItem_Click" Tag="{Binding}" Visibility="{Binding IsContextMenu, Converter={StaticResource BooleanToVisibilityConverter}}"/>
@@ -2474,7 +2480,7 @@
         <!-- 规则编辑浮层弹窗 (遵循 Windows 11 原生实心 ContentDialog 规范，动态自适应暗黑/浅色主题) -->
         <Grid x:Name="DialogEditRuleHost" Grid.Row="0" Grid.RowSpan="2" Background="{DynamicResource SmokeFillColorDefaultBrush}" Visibility="Collapsed">
             <Grid Width="480" HorizontalAlignment="Center" VerticalAlignment="Center">
-                <Border CornerRadius="8" Background="{DynamicResource SolidBackgroundFillColorBaseBrush}" IsHitTestVisible="False">
+                <Border CornerRadius="8" Background="{DynamicResource SolidBackgroundFillColorBaseBrush}" IsHitTestVisible="False" CacheMode="BitmapCache">
                     <Border.Effect>
                         <DropShadowEffect BlurRadius="40" Direction="270" ShadowDepth="10" Opacity="0.35" Color="#000000"/>
                     </Border.Effect>
@@ -2499,7 +2505,7 @@
 
                     <TextBlock Text="匹配模式" FontSize="13" Foreground="{DynamicResource TextFillColorPrimaryBrush}" Margin="0,0,0,6"/>
                     <ComboBox x:Name="CmbEditRuleMode" Margin="0,0,0,24" HorizontalAlignment="Stretch">
-                        <ComboBoxItem Content="永久拦截" Tag="PermanentAdaptive"/>
+                        <ComboBoxItem Content="永久" Tag="PermanentAdaptive"/>
                         <ComboBoxItem Content="仅此版本" Tag="StrictCurrentVersion"/>
                     </ComboBox>
 
@@ -2521,7 +2527,7 @@
         <!-- 手动新建防护规则弹窗 -->
         <Grid x:Name="DialogCreateRuleHost" Grid.Row="0" Grid.RowSpan="2" Background="{DynamicResource SmokeFillColorDefaultBrush}" Visibility="Collapsed">
             <Grid Width="560" MaxHeight="660" HorizontalAlignment="Center" VerticalAlignment="Center">
-                <Border CornerRadius="8" Background="{DynamicResource SolidBackgroundFillColorBaseBrush}" IsHitTestVisible="False">
+                <Border CornerRadius="8" Background="{DynamicResource SolidBackgroundFillColorBaseBrush}" IsHitTestVisible="False" CacheMode="BitmapCache">
                     <Border.Effect>
                         <DropShadowEffect BlurRadius="40" Direction="270" ShadowDepth="10" Opacity="0.35" Color="#000000"/>
                     </Border.Effect>
@@ -2589,7 +2595,7 @@
 
                             <TextBlock Text="匹配模式" FontSize="13" Foreground="{DynamicResource TextFillColorPrimaryBrush}" Margin="0,0,0,6"/>
                             <ComboBox x:Name="CmbCreateRuleMode" HorizontalAlignment="Stretch" Margin="0,0,0,12" SelectionChanged="CmbCreateRuleMode_SelectionChanged">
-                                <ComboBoxItem Content="永久拦截（自适应特征 / 文件夹目录匹配）" Tag="PermanentAdaptive"/>
+                                <ComboBoxItem Content="永久（自适应特征 / 文件夹目录匹配）" Tag="PermanentAdaptive"/>
                                 <ComboBoxItem Content="仅此版本（严格校验单文件 MD5）" Tag="StrictCurrentVersion"/>
                             </ComboBox>
 
@@ -2632,7 +2638,7 @@
         <!-- 外壳扩展深入分析浮层弹窗 (对齐 ContextMenuManager 深入分析结果) -->
         <Grid x:Name="DialogDeepAnalysisHost" Grid.Row="0" Grid.RowSpan="2" Background="{DynamicResource SmokeFillColorDefaultBrush}" Visibility="Collapsed">
             <Grid Width="620" MaxHeight="560" HorizontalAlignment="Center" VerticalAlignment="Center">
-                <Border CornerRadius="8" Background="{DynamicResource SolidBackgroundFillColorBaseBrush}" IsHitTestVisible="False">
+                <Border CornerRadius="8" Background="{DynamicResource SolidBackgroundFillColorBaseBrush}" IsHitTestVisible="False" CacheMode="BitmapCache">
                     <Border.Effect>
                         <DropShadowEffect BlurRadius="40" Direction="270" ShadowDepth="10" Opacity="0.35" Color="#000000"/>
                     </Border.Effect>
@@ -2774,7 +2780,7 @@
         <!-- 启动项与待审核项详情弹窗 (支持命令行与注册表位置跳转) -->
         <Grid x:Name="DialogItemDetailHost" Grid.Row="0" Grid.RowSpan="2" Background="{DynamicResource SmokeFillColorDefaultBrush}" Visibility="Collapsed">
             <Grid Width="560" HorizontalAlignment="Center" VerticalAlignment="Center">
-                <Border CornerRadius="8" Background="{DynamicResource SolidBackgroundFillColorBaseBrush}" IsHitTestVisible="False">
+                <Border CornerRadius="8" Background="{DynamicResource SolidBackgroundFillColorBaseBrush}" IsHitTestVisible="False" CacheMode="BitmapCache">
                     <Border.Effect>
                         <DropShadowEffect BlurRadius="40" Direction="270" ShadowDepth="10" Opacity="0.35" Color="#000000"/>
                     </Border.Effect>
@@ -2835,7 +2841,7 @@
         <!-- 编辑备注浮层弹窗 -->
         <Grid x:Name="DialogEditNoteHost" Grid.Row="0" Grid.RowSpan="2" Background="{DynamicResource SmokeFillColorDefaultBrush}" Visibility="Collapsed">
             <Grid Width="440" HorizontalAlignment="Center" VerticalAlignment="Center">
-                <Border CornerRadius="8" Background="{DynamicResource SolidBackgroundFillColorBaseBrush}" IsHitTestVisible="False">
+                <Border CornerRadius="8" Background="{DynamicResource SolidBackgroundFillColorBaseBrush}" IsHitTestVisible="False" CacheMode="BitmapCache">
                     <Border.Effect>
                         <DropShadowEffect BlurRadius="40" Direction="270" ShadowDepth="10" Opacity="0.35" Color="#000000"/>
                     </Border.Effect>
@@ -2865,7 +2871,7 @@
         <!-- 日志恢复选项浮层弹窗 -->
         <Grid x:Name="DialogRestoreActionHost" Grid.Row="0" Grid.RowSpan="2" Background="{DynamicResource SmokeFillColorDefaultBrush}" Visibility="Collapsed">
             <Grid Width="480" HorizontalAlignment="Center" VerticalAlignment="Center">
-                <Border CornerRadius="8" Background="{DynamicResource SolidBackgroundFillColorBaseBrush}" IsHitTestVisible="False">
+                <Border CornerRadius="8" Background="{DynamicResource SolidBackgroundFillColorBaseBrush}" IsHitTestVisible="False" CacheMode="BitmapCache">
                     <Border.Effect>
                         <DropShadowEffect BlurRadius="40" Direction="270" ShadowDepth="10" Opacity="0.35" Color="#000000"/>
                     </Border.Effect>
@@ -2905,7 +2911,7 @@
         <!-- Win+X 重命名浮层弹窗 -->
         <Grid x:Name="DialogWinXRenameHost" Grid.Row="0" Grid.RowSpan="2" Background="{DynamicResource SmokeFillColorDefaultBrush}" Visibility="Collapsed">
             <Grid Width="440" HorizontalAlignment="Center" VerticalAlignment="Center">
-                <Border CornerRadius="8" Background="{DynamicResource SolidBackgroundFillColorBaseBrush}" IsHitTestVisible="False">
+                <Border CornerRadius="8" Background="{DynamicResource SolidBackgroundFillColorBaseBrush}" IsHitTestVisible="False" CacheMode="BitmapCache">
                     <Border.Effect>
                         <DropShadowEffect BlurRadius="40" Direction="270" ShadowDepth="10" Opacity="0.35" Color="#000000"/>
                     </Border.Effect>
@@ -2928,6 +2934,48 @@
                         <ui:Button Grid.Column="2" Content="取消" Appearance="Secondary" Height="36" HorizontalAlignment="Stretch" Click="BtnWinXCancelRename_Click"/>
                     </Grid>
                 </StackPanel>
+                </Border>
+            </Grid>
+        </Grid>
+
+        <!-- WinUI 3 圆角 ContentDialog 通用消息与确认浮层 -->
+        <Grid x:Name="DialogContentMessageHost" Grid.Row="0" Grid.RowSpan="2" Panel.ZIndex="1000" Background="{DynamicResource SmokeFillColorDefaultBrush}" Visibility="Collapsed">
+            <Grid MinWidth="340" MaxWidth="480" HorizontalAlignment="Center" VerticalAlignment="Center" Margin="32">
+                <Border CornerRadius="8" Background="{DynamicResource SolidBackgroundFillColorBaseBrush}" IsHitTestVisible="False" CacheMode="BitmapCache">
+                    <Border.Effect>
+                        <DropShadowEffect BlurRadius="40" Direction="270" ShadowDepth="10" Opacity="0.35" Color="#000000"/>
+                    </Border.Effect>
+                </Border>
+                <Border CornerRadius="8"
+                        Background="{DynamicResource SolidBackgroundFillColorBaseBrush}"
+                        BorderBrush="{DynamicResource SurfaceStrokeColorDefaultBrush}"
+                        BorderThickness="1"
+                        ClipToBounds="True">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="*"/>
+                            <RowDefinition Height="Auto"/>
+                        </Grid.RowDefinitions>
+                        <Border Grid.Row="0" Background="{DynamicResource SolidBackgroundFillColorBaseBrush}" Padding="24,22,24,20">
+                            <StackPanel>
+                                <TextBlock x:Name="TxtContentDialogTitle" FontSize="19" FontWeight="SemiBold" TextWrapping="Wrap" Foreground="{DynamicResource TextFillColorPrimaryBrush}" Margin="0,0,0,12"/>
+                                <ScrollViewer x:Name="ScrollContentDialogBody" MaxHeight="360" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                                    <TextBlock x:Name="TxtContentDialogBody" FontSize="14" LineHeight="22" TextWrapping="Wrap" Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
+                                </ScrollViewer>
+                            </StackPanel>
+                        </Border>
+                        <Border Grid.Row="1" Background="{DynamicResource SolidBackgroundFillColorSecondaryBrush}" BorderBrush="{DynamicResource DividerStrokeColorDefaultBrush}" BorderThickness="0,1,0,0" Padding="24,18">
+                            <Grid x:Name="GridContentDialogButtons">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition x:Name="ColContentDialogPrimary" Width="*"/>
+                                    <ColumnDefinition x:Name="ColContentDialogSpacer" Width="12"/>
+                                    <ColumnDefinition x:Name="ColContentDialogClose" Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <ui:Button x:Name="BtnContentDialogPrimary" Grid.Column="0" Content="确定" Appearance="Primary" Height="34" HorizontalAlignment="Stretch" Click="BtnContentDialogPrimary_Click"/>
+                                <ui:Button x:Name="BtnContentDialogClose" Grid.Column="2" Content="取消" Appearance="Secondary" Height="34" HorizontalAlignment="Stretch" Click="BtnContentDialogClose_Click"/>
+                            </Grid>
+                        </Border>
+                    </Grid>
                 </Border>
             </Grid>
         </Grid>

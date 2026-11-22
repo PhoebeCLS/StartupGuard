@@ -99,7 +99,7 @@ public sealed class Request12RegressionTests
         var perm = new RuleRecord { DisplayName = "Demo", RuleMode = RuleMatchMode.PermanentAdaptive };
         var strict = new RuleRecord { DisplayName = "Demo", RuleMode = RuleMatchMode.StrictCurrentVersion };
 
-        Assert.Equal("永久拦截", perm.RuleModeText);
+        Assert.Equal("永久", perm.RuleModeText);
         Assert.Equal("仅此版本", strict.RuleModeText);
     }
 

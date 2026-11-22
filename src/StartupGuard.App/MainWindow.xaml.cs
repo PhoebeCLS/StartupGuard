@@ -338,6 +338,9 @@ public partial class MainWindow : FluentWindow
     private readonly Stack<string> _navigationHistory = new();
     private string _currentPageTag = "PageStartupManager";
     private bool _isNavigatingBack;
+    private bool _navBackPressedDown;
+    private readonly SemaphoreSlim _contentDialogGate = new(1, 1);
+    private TaskCompletionSource<bool>? _contentDialogTcs;
 
     public MainWindow()
     {
@@ -451,6 +454,7 @@ public partial class MainWindow : FluentWindow
                 Microsoft.Win32.SystemEvents.DisplaySettingsChanged -= OnDisplaySettingsChanged;
                 Microsoft.Win32.SystemEvents.UserPreferenceChanged -= OnSystemUserPreferenceChanged;
                 _lifecycleCts.Cancel();
+                Interlocked.Exchange(ref _contentDialogTcs, null)?.TrySetResult(false);
                 _lifecycleCts.Dispose();
                 _debounceRefreshCts?.Cancel();
                 _debounceRefreshCts?.Dispose();
@@ -889,62 +893,100 @@ public partial class MainWindow : FluentWindow
         }
     }
 
-    private static System.Windows.Controls.TextBlock CreateDialogTextBlock(string content)
-    {
-        return new System.Windows.Controls.TextBlock
-        {
-            Text = content,
-            TextWrapping = TextWrapping.Wrap,
-            TextAlignment = TextAlignment.Left,
-            VerticalAlignment = VerticalAlignment.Top,
-            HorizontalAlignment = HorizontalAlignment.Stretch,
-            LineHeight = 22,
-            FontSize = 14,
-            MaxWidth = 420
-        };
-    }
-
-    private async Task<bool> ShowWinUiConfirmDialogAsync(string title, string content, string primaryText = "确定", string closeText = "取消")
-    {
-        try
-        {
-            var msgBox = new Wpf.Ui.Controls.MessageBox
-            {
-                Title = title,
-                Content = CreateDialogTextBlock(content),
-                PrimaryButtonText = primaryText,
-                CloseButtonText = closeText,
-                MinHeight = 120,
-                Owner = this
-            };
-            var result = await msgBox.ShowDialogAsync();
-            return result == Wpf.Ui.Controls.MessageBoxResult.Primary;
-        }
-        catch
-        {
-            return System.Windows.MessageBox.Show(this, content, title, System.Windows.MessageBoxButton.OKCancel, MessageBoxImage.Question) == System.Windows.MessageBoxResult.OK;
-        }
-    }
+    private Task<bool> ShowWinUiConfirmDialogAsync(string title, string content, string primaryText = "确定", string closeText = "取消")
+        => ShowRoundedContentDialogAsync(title, content, primaryText, closeText);
 
     private async Task ShowWinUiInfoDialogAsync(string title, string content)
+        => _ = await ShowRoundedContentDialogAsync(title, content, primaryText: null, closeText: "确定");
+
+    private async Task<bool> ShowRoundedContentDialogAsync(string title, string content, string? primaryText, string closeText)
     {
+        await _contentDialogGate.WaitAsync();
         try
         {
-            var msgBox = new Wpf.Ui.Controls.MessageBox
+            if (_lifecycleCts.IsCancellationRequested)
+                return false;
+
+            var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            await Dispatcher.InvokeAsync(() =>
             {
-                Title = title,
-                Content = CreateDialogTextBlock(content),
-                CloseButtonText = "确定",
-                MinHeight = 120,
-                Owner = this
-            };
-            await msgBox.ShowDialogAsync();
+                if (_lifecycleCts.IsCancellationRequested)
+                {
+                    tcs.TrySetResult(false);
+                    return;
+                }
+
+                if (!IsLoaded || DialogContentMessageHost == null)
+                {
+                    tcs.TrySetResult(System.Windows.MessageBox.Show(
+                        this,
+                        content,
+                        title,
+                        primaryText != null ? System.Windows.MessageBoxButton.OKCancel : System.Windows.MessageBoxButton.OK,
+                        primaryText != null ? MessageBoxImage.Question : MessageBoxImage.Information) == System.Windows.MessageBoxResult.OK);
+                    return;
+                }
+
+                _contentDialogTcs = tcs;
+                TxtContentDialogTitle.Text = title;
+                TxtContentDialogBody.Text = content;
+                ScrollContentDialogBody?.ScrollToHome();
+
+                if (primaryText != null)
+                {
+                    BtnContentDialogPrimary.Content = primaryText;
+                    BtnContentDialogPrimary.Visibility = Visibility.Visible;
+                    ColContentDialogPrimary.Width = new GridLength(1, GridUnitType.Star);
+                    ColContentDialogSpacer.Width = new GridLength(12);
+                    BtnContentDialogClose.Content = closeText;
+                    BtnContentDialogClose.Appearance = ControlAppearance.Secondary;
+                }
+                else
+                {
+                    BtnContentDialogPrimary.Visibility = Visibility.Collapsed;
+                    ColContentDialogPrimary.Width = new GridLength(1, GridUnitType.Star);
+                    ColContentDialogSpacer.Width = new GridLength(12);
+                    BtnContentDialogClose.Content = closeText;
+                    BtnContentDialogClose.Appearance = ControlAppearance.Primary;
+                }
+
+                DialogContentMessageHost.Visibility = Visibility.Visible;
+                Themes.FluentDialogBehavior.PlayOpenAnimation(DialogContentMessageHost);
+                if (primaryText != null)
+                    BtnContentDialogPrimary.Focus();
+                else
+                    BtnContentDialogClose.Focus();
+            });
+
+            return await tcs.Task;
         }
         catch
         {
-            System.Windows.MessageBox.Show(this, content, title, System.Windows.MessageBoxButton.OK, MessageBoxImage.Information);
+            return System.Windows.MessageBox.Show(
+                content,
+                title,
+                primaryText != null ? System.Windows.MessageBoxButton.OKCancel : System.Windows.MessageBoxButton.OK,
+                primaryText != null ? MessageBoxImage.Question : MessageBoxImage.Information) == System.Windows.MessageBoxResult.OK;
+        }
+        finally
+        {
+            _contentDialogGate.Release();
         }
     }
+
+    private void CompleteContentDialog(bool confirmed)
+    {
+        var tcs = Interlocked.Exchange(ref _contentDialogTcs, null);
+        if (DialogContentMessageHost != null)
+        {
+            DialogContentMessageHost.Visibility = Visibility.Collapsed;
+        }
+        tcs?.TrySetResult(confirmed);
+    }
+
+    private void BtnContentDialogPrimary_Click(object sender, RoutedEventArgs e) => CompleteContentDialog(true);
+
+    private void BtnContentDialogClose_Click(object sender, RoutedEventArgs e) => CompleteContentDialog(false);
 
     #region Data Loading & Refresh
 
@@ -1781,8 +1823,66 @@ public partial class MainWindow : FluentWindow
         TryNavigateBack();
     }
 
+    private void BtnNavBack_PreviewMouseLeftButtonDown(object sender, System.Windows.Input.MouseButtonEventArgs e)
+    {
+        _navBackPressedDown = true;
+        if (ScaleNavBack != null && TranslateNavBack != null)
+        {
+            var ease = new CubicEase { EasingMode = EasingMode.EaseOut };
+            var duration = TimeSpan.FromMilliseconds(150);
+            ScaleNavBack.BeginAnimation(ScaleTransform.ScaleXProperty, new DoubleAnimation(0.80, duration) { EasingFunction = ease });
+            TranslateNavBack.BeginAnimation(TranslateTransform.XProperty, new DoubleAnimation(-1.5, duration) { EasingFunction = ease });
+        }
+    }
+
+    private void BtnNavBack_PreviewMouseLeftButtonUp(object sender, System.Windows.Input.MouseButtonEventArgs e)
+    {
+        if (BtnNavBack != null && !BtnNavBack.IsMouseOver && _navBackPressedDown)
+        {
+            ResetNavBackVisual(240);
+        }
+    }
+
+    private void BtnNavBack_MouseLeave(object sender, System.Windows.Input.MouseEventArgs e)
+    {
+        if (_navBackPressedDown)
+        {
+            ResetNavBackVisual(240);
+        }
+    }
+
+    private void ResetNavBackVisual(int durationMs)
+    {
+        _navBackPressedDown = false;
+        if (ScaleNavBack != null && TranslateNavBack != null)
+        {
+            var ease = new CubicEase { EasingMode = EasingMode.EaseOut };
+            var duration = TimeSpan.FromMilliseconds(durationMs);
+            ScaleNavBack.BeginAnimation(ScaleTransform.ScaleXProperty, new DoubleAnimation(1.0, duration) { EasingFunction = ease });
+            TranslateNavBack.BeginAnimation(TranslateTransform.XProperty, new DoubleAnimation(0.0, duration) { EasingFunction = ease });
+        }
+    }
+
     private void MainWindow_PreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
     {
+        if (DialogContentMessageHost?.Visibility == Visibility.Visible)
+        {
+            if (e.Key == System.Windows.Input.Key.Escape)
+            {
+                CompleteContentDialog(false);
+                e.Handled = true;
+                return;
+            }
+
+            if (e.Key == System.Windows.Input.Key.Enter)
+            {
+                bool hasPrimary = BtnContentDialogPrimary?.Visibility == Visibility.Visible;
+                CompleteContentDialog(hasPrimary);
+                e.Handled = true;
+                return;
+            }
+        }
+
         if (e.Key == System.Windows.Input.Key.System && e.SystemKey == System.Windows.Input.Key.Left &&
             (System.Windows.Input.Keyboard.Modifiers & System.Windows.Input.ModifierKeys.Alt) == System.Windows.Input.ModifierKeys.Alt)
         {
@@ -1812,12 +1912,30 @@ public partial class MainWindow : FluentWindow
         }
 
         string prevTag = _navigationHistory.Pop();
-        if (TranslateNavBack != null)
+        var reboundSpline = new KeySpline(0.0, 0.0, 0.0, 1.0);
+        bool fromPress = _navBackPressedDown;
+        _navBackPressedDown = false;
+        if (ScaleNavBack != null && TranslateNavBack != null)
         {
-            var nudge = new DoubleAnimationUsingKeyFrames();
-            nudge.KeyFrames.Add(new EasingDoubleKeyFrame(-4.0, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(70)), new CubicEase { EasingMode = EasingMode.EaseOut }));
-            nudge.KeyFrames.Add(new EasingDoubleKeyFrame(0.0, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(160)), new CubicEase { EasingMode = EasingMode.EaseOut }));
-            TranslateNavBack.BeginAnimation(TranslateTransform.XProperty, nudge);
+            var scaleAnim = new DoubleAnimationUsingKeyFrames();
+            var xAnim = new DoubleAnimationUsingKeyFrames();
+            if (fromPress)
+            {
+                scaleAnim.KeyFrames.Add(new SplineDoubleKeyFrame(1.04, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(140)), reboundSpline));
+                scaleAnim.KeyFrames.Add(new SplineDoubleKeyFrame(1.0, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(320)), reboundSpline));
+                xAnim.KeyFrames.Add(new SplineDoubleKeyFrame(-2.2, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(110)), reboundSpline));
+                xAnim.KeyFrames.Add(new SplineDoubleKeyFrame(0.0, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(320)), reboundSpline));
+            }
+            else
+            {
+                scaleAnim.KeyFrames.Add(new SplineDoubleKeyFrame(0.84, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(110)), reboundSpline));
+                scaleAnim.KeyFrames.Add(new SplineDoubleKeyFrame(1.0, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(320)), reboundSpline));
+                xAnim.KeyFrames.Add(new SplineDoubleKeyFrame(-2.0, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(110)), reboundSpline));
+                xAnim.KeyFrames.Add(new SplineDoubleKeyFrame(0.0, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(320)), reboundSpline));
+            }
+
+            ScaleNavBack.BeginAnimation(ScaleTransform.ScaleXProperty, scaleAnim);
+            TranslateNavBack.BeginAnimation(TranslateTransform.XProperty, xAnim);
         }
 
         _isNavigatingBack = true;
@@ -2885,6 +3003,7 @@ public partial class MainWindow : FluentWindow
                 : Visibility.Collapsed;
         }
         DialogItemDetailHost.Visibility = Visibility.Visible;
+        Themes.FluentDialogBehavior.PlayOpenAnimation(DialogItemDetailHost);
     }
 
     private void BtnItemDetailOpenFile_Click(object sender, RoutedEventArgs e)
@@ -3047,6 +3166,7 @@ public partial class MainWindow : FluentWindow
         };
 
         DialogDeepAnalysisHost.Visibility = Visibility.Visible;
+        Themes.FluentDialogBehavior.PlayOpenAnimation(DialogDeepAnalysisHost);
 
         if (!string.IsNullOrEmpty(clsid))
         {
@@ -3193,6 +3313,7 @@ public partial class MainWindow : FluentWindow
             TxtEditNoteItemName.Text = item.DisplayName;
             TxtEditNoteInput.Text = _sqliteRepo.GetItemNote(item.LocationKey);
             DialogEditNoteHost.Visibility = Visibility.Visible;
+            Themes.FluentDialogBehavior.PlayOpenAnimation(DialogEditNoteHost);
         }
     }
 
@@ -3670,7 +3791,7 @@ public partial class MainWindow : FluentWindow
         {
             _sqliteRepo.InsertOrUpdateRule(rule);
             SyncRulesBinaryAndNotifyService(_sqliteRepo);
-            await ShowWinUiInfoDialogAsync("保存成功", $"已为「{audit.DisplayName}」创建永久拦截规则！");
+            await ShowWinUiInfoDialogAsync("保存成功", $"已为「{audit.DisplayName}」创建永久阻止规则！");
             await RefreshAllDataAsync();
         }
         catch (Exception ex)
@@ -5602,6 +5723,7 @@ public partial class MainWindow : FluentWindow
             ? 0
             : (log.Category == MonitorCategory.Win32Service ? 3 : (log.Category == MonitorCategory.KernelDriver ? 0 : 1));
         DialogRestoreActionHost.Visibility = Visibility.Visible;
+        Themes.FluentDialogBehavior.PlayOpenAnimation(DialogRestoreActionHost);
     }
 
     private void BtnCancelRestore_Click(object sender, RoutedEventArgs e)
@@ -5747,6 +5869,7 @@ public partial class MainWindow : FluentWindow
         CmbEditRuleMode.SelectedIndex = rule.RuleMode == RuleMatchMode.StrictCurrentVersion ? 1 : 0;
 
         DialogEditRuleHost.Visibility = Visibility.Visible;
+        Themes.FluentDialogBehavior.PlayOpenAnimation(DialogEditRuleHost);
     }
 
     internal static List<ActionOptionItem> BuildRuleActionOptions(MonitorCategory category) => category switch
@@ -5960,7 +6083,11 @@ public partial class MainWindow : FluentWindow
         if (TxtWinXRenameTitle != null) TxtWinXRenameTitle.Text = "重命名 Win+X 分组";
         if (TxtWinXRenameOriginal != null) TxtWinXRenameOriginal.Text = $"原分组名：{grp.GroupName}";
         if (TxtWinXRenameInput != null) TxtWinXRenameInput.Text = grp.GroupName;
-        if (DialogWinXRenameHost != null) DialogWinXRenameHost.Visibility = Visibility.Visible;
+        if (DialogWinXRenameHost != null)
+        {
+            DialogWinXRenameHost.Visibility = Visibility.Visible;
+            Themes.FluentDialogBehavior.PlayOpenAnimation(DialogWinXRenameHost);
+        }
     }
 
     private async void BtnWinXRestoreGroup_Click(object sender, RoutedEventArgs e)
@@ -6058,7 +6185,11 @@ public partial class MainWindow : FluentWindow
         if (TxtWinXRenameTitle != null) TxtWinXRenameTitle.Text = "重命名 Win+X 快捷方式";
         if (TxtWinXRenameOriginal != null) TxtWinXRenameOriginal.Text = $"当前名称：{sc.DisplayName}";
         if (TxtWinXRenameInput != null) TxtWinXRenameInput.Text = sc.DisplayName;
-        if (DialogWinXRenameHost != null) DialogWinXRenameHost.Visibility = Visibility.Visible;
+        if (DialogWinXRenameHost != null)
+        {
+            DialogWinXRenameHost.Visibility = Visibility.Visible;
+            Themes.FluentDialogBehavior.PlayOpenAnimation(DialogWinXRenameHost);
+        }
     }
 
     private void BtnWinXMoveUp_Click(object sender, RoutedEventArgs e)
@@ -6237,6 +6368,7 @@ public partial class MainWindow : FluentWindow
         CmbCreateRuleMode.SelectedIndex = 0;
 
         DialogCreateRuleHost.Visibility = Visibility.Visible;
+        Themes.FluentDialogBehavior.PlayOpenAnimation(DialogCreateRuleHost);
     }
 
     private MonitorCategory GetSelectedCreateRuleCategory()
@@ -6280,7 +6412,7 @@ public partial class MainWindow : FluentWindow
         string path = TxtCreateRuleTargetPath.Text.Trim().Trim('"');
         if (CmbCreateRuleMode.SelectedIndex == 1 && !string.IsNullOrEmpty(path) && IsFolderPathCandidate(path))
         {
-            ShowCreateRuleError("文件夹规则不支持「仅此版本严格 MD5」模式，请切回「永久拦截」。");
+            ShowCreateRuleError("文件夹规则不支持「仅此版本严格 MD5」模式，请切回「永久」。");
         }
     }
 
@@ -6595,7 +6727,7 @@ public partial class MainWindow : FluentWindow
 
             if (mode == RuleMatchMode.StrictCurrentVersion)
             {
-                ShowCreateRuleError("文件夹规则不支持「仅此版本严格 MD5」模式，请切回「永久拦截」。");
+                ShowCreateRuleError("文件夹规则不支持「仅此版本严格 MD5」模式，请切回「永久」。");
                 return;
             }
 

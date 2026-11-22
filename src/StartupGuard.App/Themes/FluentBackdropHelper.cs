@@ -14,7 +14,9 @@ namespace StartupGuard.Themes;
 public static partial class FluentBackdropHelper
 {
     private const int DwmwaUseImmersiveDarkMode = 20;
+    private const int DwmwaWindowCornerPreference = 33;
     private const int DwmwaSystemBackdropType = 38;
+    private const int DwmwcpRound = 2; // Win11 标准圆角
     private const int DwmsbtMainWindow = 2; // Mica
 
     public static void ApplyMica(Window window, bool isDarkTheme)
@@ -43,6 +45,9 @@ public static partial class FluentBackdropHelper
             {
                 target.BackgroundColor = System.Windows.Media.Colors.Transparent;
             }
+
+            int cornerPref = DwmwcpRound;
+            _ = DwmSetWindowAttribute(hwnd, DwmwaWindowCornerPreference, ref cornerPref, sizeof(int));
 
             int darkValue = isDarkTheme ? 1 : 0;
             _ = DwmSetWindowAttribute(hwnd, DwmwaUseImmersiveDarkMode, ref darkValue, sizeof(int));
